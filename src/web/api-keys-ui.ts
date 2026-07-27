@@ -95,6 +95,17 @@ const keysHtml = `<!doctype html>
     .secret-panel strong { color: #a7f3d0; }
     .secret-value { display: flex; gap: 8px; margin-top: 10px; }
     .secret-value input { font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .connection-panel { margin-bottom: 20px; }
+    .connection-body { padding: 18px 22px 22px; }
+    .connection-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .endpoint { padding: 13px; border: 1px solid rgba(255,255,255,.10); border-radius: 13px; background: rgba(255,255,255,.035); }
+    .endpoint-label { color: var(--soft); font-size: 12px; font-weight: 750; margin-bottom: 8px; }
+    .endpoint-value { display: flex; gap: 8px; align-items: center; }
+    .endpoint-value input { min-width: 0; padding: 9px 10px; font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .endpoint-value .btn { flex: 0 0 auto; padding: 9px 11px; }
+    .endpoint-meta { color: var(--muted); font-size: 11px; margin-top: 7px; }
+    .code-block { margin: 14px 0 0; padding: 13px; overflow: auto; border: 1px solid rgba(255,255,255,.10); border-radius: 13px; background: rgba(7,9,16,.68); color: #d9d2ff; font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
+    .connection-note { color: var(--muted); font-size: 12px; margin: 12px 0 0; }
     .toast { position: fixed; right: 22px; bottom: 22px; z-index: 5; max-width: min(420px, calc(100% - 44px)); transform: translateY(18px); opacity: 0; pointer-events: none; padding: 12px 15px; border: 1px solid var(--line); border-radius: 12px; background: #1b1f31; color: var(--soft); box-shadow: var(--shadow); transition: .2s; }
     .toast.visible { transform: translateY(0); opacity: 1; }
     .toast.error { color: #fecdd3; border-color: rgba(251,113,133,.3); }
@@ -107,6 +118,7 @@ const keysHtml = `<!doctype html>
     }
     @media (max-width: 500px) {
       .row { grid-template-columns: 1fr; }
+      .connection-grid { grid-template-columns: 1fr; }
       .summary { gap: 7px; }
       .metric { padding: 12px 10px; }
       .metric-value { font-size: 20px; }
@@ -137,6 +149,37 @@ const keysHtml = `<!doctype html>
       <div class="auth-copy"><strong>Admin authentication required.</strong><br />Enter the ADMIN_API_KEY configured for this service.</div>
       <input id="admin-key" type="password" autocomplete="off" placeholder="Paste admin API key" aria-label="Admin API key" />
       <button id="connect-btn" class="btn btn-primary" type="button">Connect</button>
+    </section>
+
+    <section class="panel connection-panel">
+      <div class="panel-head">
+        <div>
+          <h2>Connect your client</h2>
+          <p>Use an enabled client key with these router URLs. The client key is not the admin key.</p>
+        </div>
+      </div>
+      <div class="connection-body">
+        <div class="connection-grid">
+          <div class="endpoint">
+            <div class="endpoint-label">OpenAI-compatible base URL</div>
+            <div class="endpoint-value">
+              <input id="openai-base-url" readonly aria-label="OpenAI-compatible base URL" />
+              <button class="btn btn-subtle copy-endpoint" data-copy-target="openai-base-url" type="button">Copy</button>
+            </div>
+            <div class="endpoint-meta">Chat: <span id="openai-chat-url"></span><br />Models: <span id="openai-models-url"></span></div>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-label">Anthropic Messages URL</div>
+            <div class="endpoint-value">
+              <input id="anthropic-messages-url" readonly aria-label="Anthropic Messages URL" />
+              <button class="btn btn-subtle copy-endpoint" data-copy-target="anthropic-messages-url" type="button">Copy</button>
+            </div>
+            <div class="endpoint-meta">Send an Anthropic-compatible POST request to this endpoint.</div>
+          </div>
+        </div>
+        <pre id="curl-example" class="code-block"></pre>
+        <p class="connection-note">Use <code>Authorization: Bearer &lt;client-api-key&gt;</code>. API keys are only shown once, immediately after creation.</p>
+      </div>
     </section>
 
     <section class="grid">
@@ -241,6 +284,25 @@ const keysHtml = `<!doctype html>
       }
 
       function showAuth(show) { el('auth-panel').classList.toggle('visible', show); }
+
+      function setConnectionDetails() {
+        const origin = window.location.origin.endsWith('/') ? window.location.origin.slice(0, -1) : window.location.origin;
+        const apiBase = origin + '/v1';
+        const chatUrl = apiBase + '/chat/completions';
+        const modelsUrl = apiBase + '/models';
+        const anthropicUrl = apiBase + '/messages';
+        const slash = String.fromCharCode(92);
+        el('openai-base-url').value = apiBase;
+        el('openai-chat-url').textContent = chatUrl;
+        el('openai-models-url').textContent = modelsUrl;
+        el('anthropic-messages-url').value = anthropicUrl;
+        el('curl-example').textContent = [
+          'curl ' + chatUrl + ' ' + slash,
+          '  -H "Authorization: Bearer <client-api-key>" ' + slash,
+          '  -H "Content-Type: application/json" ' + slash,
+          '  -d ' + JSON.stringify({ model: 'your-model-id', messages: [{ role: 'user', content: 'Hello' }] })
+        ].join(String.fromCharCode(10));
+      }
 
       function selectedProviderIds() {
         return Array.from(document.querySelectorAll('input[name="provider_id"]:checked')).map(input => input.value);
@@ -420,6 +482,12 @@ const keysHtml = `<!doctype html>
         await navigator.clipboard.writeText(el('secret-value').value);
         toast('Secret copied.');
       });
+      document.querySelectorAll('.copy-endpoint').forEach(button => button.addEventListener('click', async () => {
+        const target = el(button.dataset.copyTarget);
+        await navigator.clipboard.writeText(target.value);
+        toast('Connection URL copied.');
+      }));
+      setConnectionDetails();
       resetForm();
       load();
     })();
