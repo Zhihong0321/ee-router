@@ -5,7 +5,7 @@ import { encryptProviderKey, decryptProviderKey } from '../../security/provider-
 import { discoverModels } from '../../providers/model-discovery.js';
 import { type ProviderConfig } from '../../providers/interface.js';
 
-const providerTypes: ProviderConfig['provider_type'][] = ['openai-compatible', 'anthropic', 'gemini', 'custom'];
+const providerTypes: ProviderConfig['provider_type'][] = ['openai-compatible', 'anthropic', 'gemini', 'agy-cli', 'custom'];
 
 function parseModels(value: unknown): string[] {
   if (!Array.isArray(value)) return [];

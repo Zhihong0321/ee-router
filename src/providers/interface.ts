@@ -55,7 +55,7 @@ export interface NormalizedChunk {
 export interface ProviderConfig {
   id: string;
   name: string;
-  provider_type: 'openai-compatible' | 'anthropic' | 'gemini' | 'custom';
+  provider_type: 'openai-compatible' | 'anthropic' | 'gemini' | 'agy-cli' | 'custom';
   base_url: string;
   api_key: string;
   models: string[];

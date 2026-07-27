@@ -19,7 +19,9 @@ The placeholders in `.env.example` are documentation, not values to paste into R
 
 ## Provider console
 
-Open the deployed service URL at `/` to use the provider console. It supports OpenAI-compatible, Anthropic, Gemini, and custom endpoints, model discovery, and optional provider-key expiry deadlines. If `ADMIN_API_KEY` is configured, enter it in the console before managing providers.
+Open the deployed service URL at `/` to use the provider console. It supports OpenAI-compatible, Anthropic, Gemini, Antigravity CLI (`agy`) via the `gemini-to-api` OpenAI bridge, and custom endpoints, model discovery, and optional provider-key expiry deadlines. If `ADMIN_API_KEY` is configured, enter it in the console before managing providers.
+
+For Antigravity CLI, run the `gemini-to-api` service from `F:\gemini-to-api` and add its `/v1` URL as the provider Base URL (for example, `http://127.0.0.1:8787/v1` when both services share a host). Use the bridge's `PROXY_API_KEYS` value as the provider API key, then click `Detect models`.
 
 ## Typical database setup
 

@@ -20,6 +20,10 @@ export class ProviderRegistry {
       case 'gemini':
         adapter = new GeminiAdapter(config);
         break;
+      case 'agy-cli':
+        // The agy CLI is exposed through the OpenAI-compatible gemini-to-api bridge.
+        adapter = new OpenAIAdapter(config);
+        break;
       case 'custom':
         adapter = new CustomProviderAdapter(config);
         break;
