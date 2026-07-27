@@ -16,6 +16,7 @@ import { registerAdminLogRoutes, registerAdminStatsRoutes } from './api/admin/lo
 import { query } from './db/pool.js';
 import { authenticateAdmin } from './auth/admin.js';
 import { registerAdminUiRoutes } from './web/admin-ui.js';
+import { registerAdminKeyUiRoutes } from './web/api-keys-ui.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -74,7 +75,7 @@ async function main(): Promise<void> {
   const allowedOrigins = env.CORS_ORIGIN.split(',').map(origin => origin.trim()).filter(Boolean);
   await app.register(cors, {
     origin: allowedOrigins.includes('*') ? '*' : allowedOrigins,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   } satisfies FastifyCorsOptions);
   await app.register(rateLimit, {
@@ -99,6 +100,7 @@ async function main(): Promise<void> {
   await registerAdminLogRoutes(app);
   await registerAdminStatsRoutes(app);
   await registerAdminUiRoutes(app);
+  await registerAdminKeyUiRoutes(app);
 
   // Start server
   try {

@@ -42,7 +42,11 @@ const adminHtml = String.raw`<!doctype html>
     .eyebrow { color: var(--accent); letter-spacing: .18em; text-transform: uppercase; font-size: 11px; font-weight: 700; }
     h1 { margin: 7px 0 6px; font-size: clamp(28px, 4vw, 48px); line-height: 1.04; letter-spacing: -.045em; }
     .lede { color: var(--muted); margin: 0; max-width: 620px; font-size: 15px; }
-    .brand-mark { width: 46px; height: 46px; border: 1px solid rgba(167,139,250,.4); border-radius: 15px; display: grid; place-items: center; color: var(--accent); background: rgba(167,139,250,.12); font-weight: 800; letter-spacing: -.08em; box-shadow: 0 0 30px rgba(124,58,237,.2); }
+    .brand-mark { width: 46px; height: 46px; border: 1px solid rgba(167,139,250,.4); border-radius: 15px; display: grid; place-items: center; color: var(--accent); background: rgba(167,139,250,.12); font-weight: 800; letter-spacing: -.08em; box-shadow: 0 0 30px rgba(124,58,237,.2); flex: 0 0 auto; }
+    .topbar-right { display: flex; flex-direction: column; align-items: flex-end; gap: 14px; }
+    .nav { display: flex; gap: 6px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.04); }
+    .nav-link { padding: 7px 11px; border-radius: 8px; color: var(--muted); font-size: 12px; font-weight: 750; text-decoration: none; }
+    .nav-link:hover, .nav-link.active { color: var(--text); background: rgba(167,139,250,.16); }
     .grid { display: grid; grid-template-columns: minmax(320px, 390px) minmax(0, 1fr); gap: 22px; align-items: start; }
     .panel { border: 1px solid var(--line); background: linear-gradient(145deg, rgba(27,31,50,.94), rgba(13,15,25,.94)); border-radius: 22px; box-shadow: var(--shadow); }
     .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 22px 22px 0; }
@@ -123,9 +127,9 @@ const adminHtml = String.raw`<!doctype html>
       <div>
         <div class="eyebrow">Eter Router · Control plane</div>
         <h1>Provider keys, in one calm place.</h1>
-        <p class="lede">Connect OpenAI-compatible, Anthropic, Gemini, or custom endpoints. Discover their models before you route traffic.</p>
+        <p class="lede">Connect OpenAI-compatible, Anthropic, Gemini, Antigravity CLI, or custom endpoints. Discover their models before you route traffic.</p>
       </div>
-      <div class="brand-mark" aria-label="Eter Router">ER</div>
+      <div class="topbar-right"><nav class="nav" aria-label="Control plane"><a class="nav-link active" href="/">Providers</a><a class="nav-link" href="/keys">API keys</a></nav><div class="brand-mark" aria-label="Eter Router">ER</div></div>
     </header>
 
     <section id="auth-panel" class="auth-panel" aria-live="polite">
@@ -153,6 +157,7 @@ const adminHtml = String.raw`<!doctype html>
               <option value="openai-compatible">OpenAI standard / compatible</option>
               <option value="anthropic">Anthropic</option>
               <option value="gemini">Google Gemini</option>
+              <option value="agy-cli">Antigravity CLI (agy)</option>
               <option value="custom">Custom OpenAI-compatible</option>
             </select>
           </div>
@@ -166,7 +171,7 @@ const adminHtml = String.raw`<!doctype html>
           </div>
           <div class="field">
             <label for="api-key">Provider API key</label>
-            <input id="api-key" name="api_key" type="password" autocomplete="new-password" placeholder="sk-… / Anthropic / Gemini key" />
+            <input id="api-key" name="api_key" type="password" autocomplete="new-password" placeholder="sk-… / Anthropic / Gemini / agy bridge key" />
           </div>
           <div class="field">
             <label for="models">Available models</label>
@@ -216,12 +221,14 @@ const adminHtml = String.raw`<!doctype html>
         'openai-compatible': 'https://api.openai.com/v1',
         anthropic: 'https://api.anthropic.com/v1',
         gemini: 'https://generativelanguage.googleapis.com/v1beta',
+        'agy-cli': '',
         custom: ''
       };
       const labels = {
         'openai-compatible': 'OpenAI compatible',
         anthropic: 'Anthropic',
         gemini: 'Google Gemini',
+        'agy-cli': 'Antigravity CLI (agy)',
         custom: 'Custom endpoint'
       };
       const el = id => document.getElementById(id);
@@ -242,10 +249,18 @@ const adminHtml = String.raw`<!doctype html>
         if (state.adminKey) headers.Authorization = 'Bearer ' + state.adminKey;
         const response = await fetch(path, Object.assign({}, config, { headers }));
         const text = await response.text();
+        const contentType = response.headers.get('content-type') || '';
         let payload = {};
-        try { payload = text ? JSON.parse(text) : {}; } catch { payload = { error: text }; }
+        try {
+          payload = text && contentType.includes('json') ? JSON.parse(text) : { error: text };
+        } catch {
+          payload = { error: text };
+        }
         if (!response.ok) {
-          const error = new Error(apiError(payload));
+          const message = text && !contentType.includes('json')
+            ? 'Server returned HTTP ' + response.status + ' instead of JSON: ' + text.slice(0, 180)
+            : apiError(payload);
+          const error = new Error(message);
           error.status = response.status;
           throw error;
         }
@@ -320,7 +335,7 @@ const adminHtml = String.raw`<!doctype html>
         el('submit-btn').textContent = 'Add provider';
         el('clear-btn').textContent = 'Clear';
         el('api-key').required = true;
-        el('api-key').placeholder = 'sk-… / Anthropic / Gemini key';
+        el('api-key').placeholder = 'sk-… / Anthropic / Gemini / agy bridge key';
         el('form-status').textContent = '';
         setDefaults();
       }

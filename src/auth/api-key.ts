@@ -11,7 +11,11 @@ export interface ApiKeyInfo {
   is_active: boolean;
   rate_limit: number;
   allowed_ips: string[];
+  priority: number;
+  provider_ids: string[];
+  allowed_models: string[];
   created_at: Date;
+  updated_at: Date;
 }
 
 // Cache key lookups to reduce DB pressure

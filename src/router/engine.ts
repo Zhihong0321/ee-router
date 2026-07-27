@@ -28,24 +28,45 @@ export class RouterEngine {
    * Resolve all providers available for a given API key ID and model.
    */
   async resolveProviders(apiKeyId: string, model: string): Promise<ProviderAdapter[]> {
-    // Get all provider_group_ids for this key
-    const groupRows = await query<{ provider_group_id: string }>(
-      `SELECT pgm.provider_group_id
-       FROM api_key_groups akg
-       JOIN provider_group_members pgm ON pgm.provider_group_id = akg.provider_group_id
-       WHERE akg.api_key_id = $1`,
-      [apiKeyId]
+    const settingsRows = await query<{ provider_ids: string[]; allowed_models: string[] }>(
+      'SELECT provider_ids, allowed_models FROM api_keys WHERE id = $1 AND is_active = true',
+      [apiKeyId],
     );
+    const settings = settingsRows[0];
+    if (!settings) return [];
 
-    const groupIds = [...new Set(groupRows.map(r => r.provider_group_id))];
-    if (groupIds.length === 0) return [];
+    const allowedModels = settings.allowed_models ?? [];
+    if (allowedModels.length > 0 && model !== '*' && !allowedModels.includes('*') && !allowedModels.includes(model)) {
+      return [];
+    }
 
-    // Get all provider IDs in these groups
-    const memberRows = await query<{ provider_id: string }>(
-      `SELECT DISTINCT provider_id FROM provider_group_members
-       WHERE provider_group_id = ANY($1)`,
-      [groupIds]
-    );
+    let memberRows: Array<{ provider_id: string }>;
+    const providerIds = settings.provider_ids ?? [];
+    if (providerIds.length > 0) {
+      memberRows = await query<{ provider_id: string }>(
+        'SELECT id AS provider_id FROM providers WHERE id = ANY($1) AND is_active = true',
+        [providerIds],
+      );
+    } else {
+      // Keep legacy group-based assignments working for keys created before
+      // direct provider selection was added.
+      const groupRows = await query<{ provider_group_id: string }>(
+        `SELECT pgm.provider_group_id
+         FROM api_key_groups akg
+         JOIN provider_group_members pgm ON pgm.provider_group_id = akg.provider_group_id
+         WHERE akg.api_key_id = $1`,
+        [apiKeyId]
+      );
+
+      const groupIds = [...new Set(groupRows.map(r => r.provider_group_id))];
+      if (groupIds.length === 0) return [];
+
+      memberRows = await query<{ provider_id: string }>(
+        `SELECT DISTINCT provider_id FROM provider_group_members
+         WHERE provider_group_id = ANY($1)`,
+        [groupIds]
+      );
+    }
 
     // Filter to active adapters that support the requested model
     return memberRows
