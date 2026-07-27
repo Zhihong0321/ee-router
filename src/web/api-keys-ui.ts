@@ -271,7 +271,7 @@ const keysHtml = `<!doctype html>
 
       async function api(path, options) {
         const config = options || {};
-        const headers = Object.assign({ 'Content-Type': 'application/json' }, config.headers || {});
+        const headers = Object.assign(config.body === undefined ? {} : { 'Content-Type': 'application/json' }, config.headers || {});
         if (state.adminKey) headers.Authorization = 'Bearer ' + state.adminKey;
         const response = await fetch(path, Object.assign({}, config, { headers }));
         const text = await response.text();
