@@ -5,6 +5,12 @@ import { latencyTracker } from '../../router/latency-tracker.js';
 import { handleStreamingProxy, handleNonStreamingProxy, type ApiFormat } from '../../streaming/stream-handler.js';
 import { type ProviderAdapter } from '../../providers/interface.js';
 
+export function filterModelsForKey(models: string[], allowedModels: string[]): string[] {
+  if (allowedModels.length === 0 || allowedModels.includes('*')) return models;
+  const allowed = new Set(allowedModels);
+  return models.filter(model => allowed.has(model));
+}
+
 export async function registerOpenAIRoutes(app: FastifyInstance): Promise<void> {
   // POST /v1/chat/completions
   app.post('/v1/chat/completions', async (request, reply) => {
@@ -117,9 +123,11 @@ export async function registerOpenAIRoutes(app: FastifyInstance): Promise<void> 
       }
     }
 
+    const visibleModels = filterModelsForKey(Array.from(allModels), auth.keyInfo.allowed_models ?? []);
+
     return reply.send({
       object: 'list',
-      data: Array.from(allModels).map(id => ({
+      data: visibleModels.map(id => ({
         id,
         object: 'model',
         created: Math.floor(Date.now() / 1000),

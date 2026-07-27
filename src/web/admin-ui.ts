@@ -350,7 +350,7 @@ const adminHtml = String.raw`<!doctype html>
         el('api-key').value = '';
         el('api-key').required = false;
         el('api-key').placeholder = 'Leave blank to keep the saved key';
-        el('models').value = Array.isArray(provider.models) ? provider.models.join('\\n') : '';
+        el('models').value = Array.isArray(provider.models) ? provider.models.join('\n') : '';
         if (provider.api_key_expires_at) {
           const date = new Date(provider.api_key_expires_at);
           const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -399,7 +399,7 @@ const adminHtml = String.raw`<!doctype html>
               ...(apiKey ? { api_key: apiKey } : {})
             })
           });
-          el('models').value = (result.models || []).join('\\n');
+          el('models').value = (result.models || []).join('\n');
           el('form-status').textContent = result.models && result.models.length ? result.models.length + ' model(s) detected.' : 'No models returned; enter model IDs manually.';
           el('form-status').className = result.models && result.models.length ? 'status ok' : 'status';
         } catch (error) {
@@ -421,7 +421,7 @@ const adminHtml = String.raw`<!doctype html>
           el('form-status').className = 'status error';
           return;
         }
-        const models = el('models').value.split(/[\\n,]/).map(value => value.trim()).filter(Boolean);
+        const models = el('models').value.split(/[\n,]/).map(value => value.trim()).filter(Boolean);
         const expiry = el('expires').value;
         const payload = {
           name: el('provider-name').value.trim(),
