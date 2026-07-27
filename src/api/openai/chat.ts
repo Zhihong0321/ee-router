@@ -56,14 +56,17 @@ export async function registerOpenAIRoutes(app: FastifyInstance): Promise<void> 
           translatedBody,
           translatedHeaders,
           callFormat,
-          reply
+          reply,
+          model
         );
       } else {
         lastResult = await handleNonStreamingProxy(
           currentAdapter,
           translatedBody,
           translatedHeaders,
-          reply
+          'openai',
+          reply,
+          model
         );
       }
 

@@ -15,6 +15,7 @@ import { registerAdminGroupRoutes } from './api/admin/groups.js';
 import { registerAdminLogRoutes, registerAdminStatsRoutes } from './api/admin/logs.js';
 import { query } from './db/pool.js';
 import { authenticateAdmin } from './auth/admin.js';
+import { registerAdminUiRoutes } from './web/admin-ui.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -28,7 +29,7 @@ async function main(): Promise<void> {
   if (pool) {
     try {
       const rows = await query<Record<string, unknown>>(
-        'SELECT id, name, provider_type, base_url, api_key_enc, api_key_iv, models, timeout_ms, max_retries, extra_headers FROM providers WHERE is_active = true'
+        'SELECT id, name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, timeout_ms, max_retries, extra_headers FROM providers WHERE is_active = true'
       );
       if (rows.length > 0) {
         providerRegistry.loadFromDb(rows);
@@ -97,6 +98,7 @@ async function main(): Promise<void> {
   await registerAdminGroupRoutes(app);
   await registerAdminLogRoutes(app);
   await registerAdminStatsRoutes(app);
+  await registerAdminUiRoutes(app);
 
   // Start server
   try {

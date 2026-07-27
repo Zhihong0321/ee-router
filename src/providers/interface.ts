@@ -55,13 +55,14 @@ export interface NormalizedChunk {
 export interface ProviderConfig {
   id: string;
   name: string;
-  provider_type: 'openai-compatible' | 'anthropic' | 'custom';
+  provider_type: 'openai-compatible' | 'anthropic' | 'gemini' | 'custom';
   base_url: string;
   api_key: string;
   models: string[];
   timeout_ms: number;
   max_retries: number;
   is_active?: boolean;
+  api_key_expires_at?: string | null;
   extra_headers?: Record<string, string>;
 }
 

@@ -2,6 +2,7 @@ import { type ProviderAdapter, type ProviderConfig } from './interface.js';
 import { OpenAIAdapter } from './openai-adapter.js';
 import { AnthropicAdapter } from './anthropic-adapter.js';
 import { CustomProviderAdapter } from './custom-adapter.js';
+import { GeminiAdapter } from './gemini-adapter.js';
 import { decryptProviderKey } from '../security/provider-key.js';
 
 export class ProviderRegistry {
@@ -15,6 +16,9 @@ export class ProviderRegistry {
         break;
       case 'anthropic':
         adapter = new AnthropicAdapter(config);
+        break;
+      case 'gemini':
+        adapter = new GeminiAdapter(config);
         break;
       case 'custom':
         adapter = new CustomProviderAdapter(config);
@@ -51,6 +55,7 @@ export class ProviderRegistry {
           (row.api_key_iv as string | undefined) ?? '0',
         ),
         models: row.models as string[],
+        api_key_expires_at: row.api_key_expires_at as string | null | undefined,
         timeout_ms: (row.timeout_ms as number) ?? 60_000,
         max_retries: (row.max_retries as number) ?? 2,
         extra_headers: row.extra_headers as Record<string, string> | undefined,

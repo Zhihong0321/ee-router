@@ -53,6 +53,7 @@ export class RouterEngine {
       .filter((a): a is ProviderAdapter =>
         a !== undefined &&
         a.config.is_active !== false &&
+        (!a.config.api_key_expires_at || new Date(a.config.api_key_expires_at).getTime() > Date.now()) &&
         (model === '*' || a.config.models.includes('*') || a.config.models.includes(model))
       );
   }

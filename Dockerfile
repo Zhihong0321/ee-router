@@ -11,8 +11,7 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
-RUN mkdir -p ./dist/db/migrations
-COPY --from=builder /app/src/db/migrations/001_initial.sql ./dist/db/migrations/001_initial.sql
+COPY --from=builder /app/src/db/migrations ./dist/db/migrations
 RUN chown -R node:node /app
 USER node
 EXPOSE 3000

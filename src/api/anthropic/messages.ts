@@ -54,14 +54,17 @@ export async function registerAnthropicRoutes(app: FastifyInstance): Promise<voi
           translatedBody,
           translatedHeaders,
           callFormat,
-          reply
+          reply,
+          model
         );
       } else {
         lastResult = await handleNonStreamingProxy(
           currentAdapter,
           translatedBody,
           translatedHeaders,
-          reply
+          'anthropic',
+          reply,
+          model
         );
       }
 

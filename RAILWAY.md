@@ -17,6 +17,10 @@ No application variable is required for the process to start. `NODE_ENV=producti
 
 The placeholders in `.env.example` are documentation, not values to paste into Railway. Blank optional variables can be omitted entirely.
 
+## Provider console
+
+Open the deployed service URL at `/` to use the provider console. It supports OpenAI-compatible, Anthropic, Gemini, and custom endpoints, model discovery, and optional provider-key expiry deadlines. If `ADMIN_API_KEY` is configured, enter it in the console before managing providers.
+
 ## Typical database setup
 
 1. Add a PostgreSQL service to the Railway project.
