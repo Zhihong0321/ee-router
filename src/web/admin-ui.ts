@@ -77,6 +77,7 @@ const adminHtml = String.raw`<!doctype html>
     .provider-list { display: grid; gap: 12px; }
     .provider-card { padding: 18px; border: 1px solid var(--line); border-radius: 18px; background: rgba(16,18,30,.78); }
     .provider-card-top { display: flex; justify-content: space-between; gap: 15px; align-items: flex-start; }
+    .card-actions { display: flex; gap: 7px; align-items: center; }
     .provider-name { font-weight: 800; font-size: 16px; }
     .provider-meta { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
     .badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 999px; color: var(--soft); background: rgba(255,255,255,.07); font-size: 11px; }
@@ -137,8 +138,8 @@ const adminHtml = String.raw`<!doctype html>
       <div class="panel">
         <div class="panel-head">
           <div>
-            <h2>Add provider key</h2>
-            <p>Keys are encrypted at rest when PROVIDER_ENCRYPTION_KEY is configured.</p>
+            <h2 id="form-title">Add provider key</h2>
+            <p id="form-description">Keys are encrypted at rest when PROVIDER_ENCRYPTION_KEY is configured.</p>
           </div>
         </div>
         <form id="provider-form" class="form">
@@ -165,7 +166,7 @@ const adminHtml = String.raw`<!doctype html>
           </div>
           <div class="field">
             <label for="api-key">Provider API key</label>
-            <input id="api-key" name="api_key" type="password" required autocomplete="new-password" placeholder="sk-… / Anthropic / Gemini key" />
+            <input id="api-key" name="api_key" type="password" autocomplete="new-password" placeholder="sk-… / Anthropic / Gemini key" />
           </div>
           <div class="field">
             <label for="models">Available models</label>
@@ -178,7 +179,7 @@ const adminHtml = String.raw`<!doctype html>
             <p class="hint">Expired provider keys are kept for audit but skipped by the router.</p>
           </div>
           <div class="button-row">
-            <button class="btn btn-primary" type="submit">Add provider</button>
+            <button id="submit-btn" class="btn btn-primary" type="submit">Add provider</button>
             <button id="clear-btn" class="btn btn-subtle" type="button">Clear</button>
             <span id="form-status" class="status" role="status"></span>
           </div>
@@ -210,7 +211,7 @@ const adminHtml = String.raw`<!doctype html>
 
   <script>
     (() => {
-      const state = { providers: [], adminKey: '', toastTimer: null };
+      const state = { providers: [], adminKey: '', toastTimer: null, editingId: null };
       const defaults = {
         'openai-compatible': 'https://api.openai.com/v1',
         anthropic: 'https://api.anthropic.com/v1',
@@ -283,12 +284,13 @@ const adminHtml = String.raw`<!doctype html>
           return '<article class="provider-card">' +
             '<div class="provider-card-top"><div><div class="provider-name">' + escapeHtml(provider.name) + '</div>' +
             '<div class="provider-meta"><span class="badge accent">' + escapeHtml(labels[provider.provider_type] || provider.provider_type) + '</span>' + expiryBadge(provider.api_key_expires_at) + '</div></div>' +
-            '<button class="btn btn-danger delete-btn" data-id="' + escapeHtml(provider.id) + '" type="button">Delete</button></div>' +
+            '<div class="card-actions"><button class="btn btn-subtle edit-btn" data-id="' + escapeHtml(provider.id) + '" type="button">Edit</button><button class="btn btn-danger delete-btn" data-id="' + escapeHtml(provider.id) + '" type="button">Delete</button></div></div>' +
             '<div class="provider-url">' + escapeHtml(provider.base_url) + '</div>' +
             '<div class="model-list">' + modelHtml + '</div>' +
             '<div class="card-footer"><span class="key-mask">' + escapeHtml(provider.key_prefix || '••••••••') + '</span><span class="hint">Added ' + escapeHtml(new Date(provider.created_at).toLocaleDateString()) + '</span></div>' +
             '</article>';
         }).join('') + '</div>';
+        list.querySelectorAll('.edit-btn').forEach(button => button.addEventListener('click', () => editProvider(button.dataset.id)));
         list.querySelectorAll('.delete-btn').forEach(button => button.addEventListener('click', () => deleteProvider(button.dataset.id)));
       }
 
@@ -310,6 +312,46 @@ const adminHtml = String.raw`<!doctype html>
         }
       }
 
+      function resetForm() {
+        state.editingId = null;
+        el('provider-form').reset();
+        el('form-title').textContent = 'Add provider key';
+        el('form-description').textContent = 'Keys are encrypted at rest when PROVIDER_ENCRYPTION_KEY is configured.';
+        el('submit-btn').textContent = 'Add provider';
+        el('clear-btn').textContent = 'Clear';
+        el('api-key').required = true;
+        el('api-key').placeholder = 'sk-… / Anthropic / Gemini key';
+        el('form-status').textContent = '';
+        setDefaults();
+      }
+
+      function editProvider(id) {
+        const provider = state.providers.find(item => item.id === id);
+        if (!provider) return;
+        state.editingId = id;
+        el('provider-name').value = provider.name || '';
+        el('provider-type').value = provider.provider_type || 'openai-compatible';
+        el('base-url').value = provider.base_url || '';
+        el('api-key').value = '';
+        el('api-key').required = false;
+        el('api-key').placeholder = 'Leave blank to keep the saved key';
+        el('models').value = Array.isArray(provider.models) ? provider.models.join('\\n') : '';
+        if (provider.api_key_expires_at) {
+          const date = new Date(provider.api_key_expires_at);
+          const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+          el('expires').value = local.toISOString().slice(0, 16);
+        } else {
+          el('expires').value = '';
+        }
+        el('form-title').textContent = 'Edit provider';
+        el('form-description').textContent = 'Update settings without revealing the saved provider key.';
+        el('submit-btn').textContent = 'Save changes';
+        el('clear-btn').textContent = 'Cancel edit';
+        el('form-status').textContent = 'Editing ' + provider.name;
+        el('form-status').className = 'status';
+        el('provider-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+
       function setDefaults() {
         const type = el('provider-type').value;
         const input = el('base-url');
@@ -320,8 +362,8 @@ const adminHtml = String.raw`<!doctype html>
         const button = el('detect-btn');
         const baseUrl = el('base-url').value.trim();
         const apiKey = el('api-key').value.trim();
-        if (!baseUrl || !apiKey) {
-          el('form-status').textContent = 'Enter a base URL and API key first.';
+        if (!baseUrl || (!apiKey && !state.editingId)) {
+          el('form-status').textContent = state.editingId ? 'Enter a base URL, or provide a replacement API key.' : 'Enter a base URL and API key first.';
           el('form-status').className = 'status error';
           return;
         }
@@ -330,9 +372,17 @@ const adminHtml = String.raw`<!doctype html>
         el('form-status').textContent = 'Asking the provider for its model catalog…';
         el('form-status').className = 'status';
         try {
-          const result = await api('/api/admin/providers/discover', {
+          const useSavedKey = Boolean(state.editingId && !apiKey);
+          const path = useSavedKey
+            ? '/api/admin/providers/' + encodeURIComponent(state.editingId) + '/discover'
+            : '/api/admin/providers/discover';
+          const result = await api(path, {
             method: 'POST',
-            body: JSON.stringify({ provider_type: el('provider-type').value, base_url: baseUrl, api_key: apiKey })
+            body: JSON.stringify({
+              provider_type: el('provider-type').value,
+              base_url: baseUrl,
+              ...(apiKey ? { api_key: apiKey } : {})
+            })
           });
           el('models').value = (result.models || []).join('\\n');
           el('form-status').textContent = result.models && result.models.length ? result.models.length + ' model(s) detected.' : 'No models returned; enter model IDs manually.';
@@ -346,31 +396,39 @@ const adminHtml = String.raw`<!doctype html>
         }
       }
 
-      async function addProvider(event) {
+      async function saveProvider(event) {
         event.preventDefault();
-        const button = el('provider-form').querySelector('button[type="submit"]');
+        const button = el('submit-btn');
+        const isEditing = Boolean(state.editingId);
+        const apiKey = el('api-key').value.trim();
+        if (!isEditing && !apiKey) {
+          el('form-status').textContent = 'Enter a provider API key first.';
+          el('form-status').className = 'status error';
+          return;
+        }
         const models = el('models').value.split(/[\\n,]/).map(value => value.trim()).filter(Boolean);
         const expiry = el('expires').value;
+        const payload = {
+          name: el('provider-name').value.trim(),
+          provider_type: el('provider-type').value,
+          base_url: el('base-url').value.trim(),
+          models,
+          api_key_expires_at: expiry ? new Date(expiry).toISOString() : null
+        };
+        if (apiKey) payload.api_key = apiKey;
         button.disabled = true;
-        el('form-status').textContent = 'Saving provider…';
+        el('form-status').textContent = isEditing ? 'Saving changes…' : 'Saving provider…';
         el('form-status').className = 'status';
         try {
-          await api('/api/admin/providers', {
-            method: 'POST',
-            body: JSON.stringify({
-              name: el('provider-name').value.trim(),
-              provider_type: el('provider-type').value,
-              base_url: el('base-url').value.trim(),
-              api_key: el('api-key').value.trim(),
-              models,
-              api_key_expires_at: expiry ? new Date(expiry).toISOString() : null
-            })
+          const path = isEditing ? '/api/admin/providers/' + encodeURIComponent(state.editingId) : '/api/admin/providers';
+          await api(path, {
+            method: isEditing ? 'PATCH' : 'POST',
+            body: JSON.stringify(payload)
           });
-          el('provider-form').reset();
-          setDefaults();
-          el('form-status').textContent = 'Provider added.';
+          resetForm();
+          el('form-status').textContent = isEditing ? 'Provider updated.' : 'Provider added.';
           el('form-status').className = 'status ok';
-          toast('Provider key added securely.');
+          toast(isEditing ? 'Provider updated.' : 'Provider key added securely.');
           await loadProviders();
         } catch (error) {
           el('form-status').textContent = error.message;
@@ -393,14 +451,14 @@ const adminHtml = String.raw`<!doctype html>
 
       el('provider-type').addEventListener('change', setDefaults);
       el('detect-btn').addEventListener('click', detectModels);
-      el('provider-form').addEventListener('submit', addProvider);
-      el('clear-btn').addEventListener('click', () => { el('provider-form').reset(); setDefaults(); el('form-status').textContent = ''; });
+      el('provider-form').addEventListener('submit', saveProvider);
+      el('clear-btn').addEventListener('click', resetForm);
       el('refresh-btn').addEventListener('click', loadProviders);
       el('connect-btn').addEventListener('click', async () => {
         state.adminKey = el('admin-key').value.trim();
         await loadProviders();
       });
-      setDefaults();
+      resetForm();
       loadProviders();
     })();
   </script>
