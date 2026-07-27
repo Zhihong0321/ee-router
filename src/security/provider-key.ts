@@ -8,15 +8,12 @@ export interface EncryptedProviderKey {
 
 function getKey(): Buffer | null {
   const value = loadEnv().PROVIDER_ENCRYPTION_KEY;
-  return value ? Buffer.from(value, 'hex') : null;
+  return value && /^[0-9a-fA-F]{64}$/.test(value) ? Buffer.from(value, 'hex') : null;
 }
 
 export function encryptProviderKey(value: string): EncryptedProviderKey {
   const key = getKey();
-  if (!key) {
-    if (loadEnv().NODE_ENV === 'production') throw new Error('PROVIDER_ENCRYPTION_KEY is required');
-    return { encrypted: value, iv: 'plaintext' };
-  }
+  if (!key) return { encrypted: value, iv: 'plaintext' };
 
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -28,12 +25,7 @@ export function encryptProviderKey(value: string): EncryptedProviderKey {
 }
 
 export function decryptProviderKey(encrypted: string, ivValue: string): string {
-  if (ivValue === '0' || ivValue === 'plaintext') {
-    if (loadEnv().NODE_ENV === 'production') {
-      throw new Error('Legacy plaintext provider credentials must be re-encrypted before production deploy');
-    }
-    return encrypted;
-  }
+  if (ivValue === '0' || ivValue === 'plaintext') return encrypted;
   const key = getKey();
   if (!key) throw new Error('PROVIDER_ENCRYPTION_KEY is required to decrypt provider credentials');
 

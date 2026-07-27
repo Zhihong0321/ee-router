@@ -21,6 +21,16 @@ function makeRequest(token?: string): FastifyRequest {
 }
 
 describe('admin authentication', () => {
+  it('leaves admin routes open when no key is configured', async () => {
+    process.env.NODE_ENV = 'test';
+    delete process.env.ADMIN_API_KEY;
+    const { reply, status } = makeReply();
+
+    await authenticateAdmin(makeRequest(), reply);
+
+    expect(status).not.toHaveBeenCalled();
+  });
+
   it('accepts the configured bearer token', async () => {
     process.env.NODE_ENV = 'test';
     process.env.ADMIN_API_KEY = 'a'.repeat(32);

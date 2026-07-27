@@ -5,19 +5,12 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
-  ADMIN_API_KEY: z.string().min(32).optional(),
-  PROVIDER_ENCRYPTION_KEY: z.string().regex(/^[0-9a-fA-F]{64}$/, 'must be a 64-character hex value').optional(),
+  ADMIN_API_KEY: z.string().optional(),
+  PROVIDER_ENCRYPTION_KEY: z.string().optional(),
   CORS_ORIGIN: z.string().default('*'),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   REQUEST_LOG_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   HEALTH_CHECK_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
-}).superRefine((env, ctx) => {
-  if (env.NODE_ENV !== 'production') return;
-  for (const key of ['DATABASE_URL', 'ADMIN_API_KEY', 'PROVIDER_ENCRYPTION_KEY'] as const) {
-    if (!env[key]) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: 'is required in production' });
-    }
-  }
 });
 
 export type Env = z.infer<typeof envSchema>;

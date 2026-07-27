@@ -1,39 +1,30 @@
 # Railway deployment
 
-## Services
+## Deploy
 
-Create a Railway service from this repository and add a PostgreSQL service to the same project. Railway will provide `DATABASE_URL` to the application when the Postgres reference variable is connected.
+Connect this GitHub repository to Railway. The included `Dockerfile` builds TypeScript, runs as the unprivileged `node` user, uses Railway's injected `PORT`, and binds to `0.0.0.0`.
 
-The repository uses the `Dockerfile` builder. The image compiles TypeScript, runs as the unprivileged `node` user, and starts with `node dist/index.js`. Railway's injected `PORT` is used automatically and the server binds to `0.0.0.0`.
+No application variable is required for the process to start. `NODE_ENV=production` is already set by the Docker image.
 
-## Required variables
+## Variables you control
 
-Set these on the application service. Do not commit their values:
+- `DATABASE_URL`: optional. Add Railway Postgres and reference `${{Postgres.DATABASE_URL}}` when you want persistence and functional API/admin data routes. Without it, the server starts and `/health` reports `database: not_configured`.
+- `ADMIN_API_KEY`: optional. When absent or blank, admin routes are open. When set, `/api/admin/*` requires `Authorization: Bearer <your value>`. There is no minimum length rule.
+- `PROVIDER_ENCRYPTION_KEY`: optional. Exactly 64 hexadecimal characters enables AES-256-GCM provider-key encryption. Blank or any other value uses plaintext provider-key storage and does not block startup.
+- `CORS_ORIGIN`: optional. Defaults to `*`; alternatively use a comma-separated list of browser origins.
+- `RATE_LIMIT_MAX`: optional. Defaults to 100 requests per IP per minute.
+- `LOG_LEVEL`: optional. Defaults to `info`.
 
-- `NODE_ENV=production`
-- `DATABASE_URL=${{Postgres.DATABASE_URL}}` (use Railway's actual Postgres service name if different)
-- `ADMIN_API_KEY`: at least 32 random characters; this protects every `/api/admin/*` endpoint
-- `PROVIDER_ENCRYPTION_KEY`: 32 random bytes encoded as 64 hex characters, for example `openssl rand -hex 32`
-- `CORS_ORIGIN`: `*` for non-browser API clients, or a comma-separated list of exact frontend origins
+The placeholders in `.env.example` are documentation, not values to paste into Railway. Blank optional variables can be omitted entirely.
 
-Optional variables are documented in `.env.example`: `LOG_LEVEL`, `RATE_LIMIT_MAX`, `REQUEST_LOG_RETENTION_DAYS`, and `HEALTH_CHECK_INTERVAL_MS`.
+## Typical database setup
 
-## First deploy
-
-1. Deploy the app and Postgres services in the same Railway project.
-2. Confirm the app deployment has the required variables above.
-3. Open `GET /health`. It must return HTTP 200 and `database: connected`; a database failure returns HTTP 503 so Railway can replace the unhealthy instance.
-4. Use the admin bearer key to create a provider and a client API key:
-
-   `Authorization: Bearer $ADMIN_API_KEY`
-
-5. Attach the provider to a provider group, then attach the group to the client API key.
-6. Test `GET /v1/models` and a small `POST /v1/chat/completions` request with the generated client key.
-
-## Existing database warning
-
-Provider credentials created before encryption support may have `api_key_iv=0`. They are intentionally rejected when `NODE_ENV=production`. Recreate those providers through the admin API after setting `PROVIDER_ENCRYPTION_KEY`, or re-encrypt them with a controlled migration before deploying.
+1. Add a PostgreSQL service to the Railway project.
+2. On the app service, add a reference variable from that service's `DATABASE_URL`.
+3. Redeploy and check `GET /health`; it should report `database: connected`.
+4. Create providers, client API keys, and groups through `/api/admin/*`.
+5. Test `/v1/models` and `/v1/chat/completions` with the generated client key.
 
 ## GitHub hygiene
 
-Commit source, `package-lock.json`, `Dockerfile`, `railway.json`, `.dockerignore`, `.env.example`, and this runbook. Never commit `.env`, provider credentials, generated `dist`, logs, or the local Legion/build logs ignored by `.gitignore`.
+Do not commit actual environment values, provider credentials, generated `dist`, dependencies, or logs. These are excluded by `.gitignore` and `.dockerignore`.

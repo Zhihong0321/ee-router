@@ -7,10 +7,11 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
   // GET /health — Railway health check endpoint
   app.get('/health', async (_request, reply) => {
     const env = loadEnv();
-    const dbOk = env.DATABASE_URL ? await checkDbHealth() : true;
+    const dbConfigured = Boolean(env.DATABASE_URL);
+    const dbOk = dbConfigured ? await checkDbHealth() : true;
     return reply.status(dbOk ? 200 : 503).send({
       status: dbOk ? 'ok' : 'degraded',
-      database: dbOk ? 'connected' : 'disconnected',
+      database: !dbConfigured ? 'not_configured' : dbOk ? 'connected' : 'disconnected',
       providers: providerRegistry.getAllAdapters().length,
       timestamp: new Date().toISOString(),
     });

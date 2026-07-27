@@ -19,12 +19,13 @@ describe('provider credential encryption', () => {
     expect(decryptProviderKey(result.encrypted, result.iv)).toBe('upstream-secret');
   });
 
-  it('rejects legacy plaintext credentials in production', () => {
+  it('allows plaintext credentials when encryption is not configured', () => {
     process.env.NODE_ENV = 'production';
-    process.env.DATABASE_URL = 'postgres://user:pass@localhost:5432/test';
-    process.env.ADMIN_API_KEY = 'a'.repeat(32);
-    process.env.PROVIDER_ENCRYPTION_KEY = '02'.repeat(32);
+    process.env.PROVIDER_ENCRYPTION_KEY = 'not-a-valid-encryption-key';
 
-    expect(() => decryptProviderKey('legacy-secret', '0')).toThrow('must be re-encrypted');
+    const result = encryptProviderKey('upstream-secret');
+
+    expect(result).toEqual({ encrypted: 'upstream-secret', iv: 'plaintext' });
+    expect(decryptProviderKey(result.encrypted, result.iv)).toBe('upstream-secret');
   });
 });

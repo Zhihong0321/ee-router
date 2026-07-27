@@ -10,10 +10,12 @@ function equalSecret(actual: string, expected: string): boolean {
 
 export async function authenticateAdmin(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const expected = loadEnv().ADMIN_API_KEY;
+  if (!expected) return;
+
   const authorization = request.headers.authorization;
   const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : '';
 
-  if (!expected || !token || !equalSecret(token, expected)) {
+  if (!token || !equalSecret(token, expected)) {
     await reply.status(401).send({ error: { type: 'authentication_error', message: 'Invalid admin credentials' } });
   }
 }
