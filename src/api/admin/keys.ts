@@ -2,6 +2,7 @@ import { type FastifyInstance } from 'fastify';
 import { query } from '../../db/pool.js';
 import { clearKeyCache } from '../../auth/api-key.js';
 import { createHash, randomBytes } from 'node:crypto';
+import { decryptProviderKey, encryptProviderKey } from '../../security/provider-key.js';
 
 function parseStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -25,10 +26,15 @@ export async function registerAdminKeyRoutes(app: FastifyInstance): Promise<void
     try {
       const rows = await query<Record<string, unknown>>(
         'SELECT id, key_prefix, name, description, is_active, rate_limit, allowed_ips, ' +
-        'priority, provider_ids, allowed_models, created_at, updated_at ' +
+        'priority, provider_ids, allowed_models, secret_enc, secret_iv, created_at, updated_at ' +
         'FROM api_keys ORDER BY priority DESC, created_at DESC'
       );
-      return reply.send(rows);
+      return reply.send(rows.map(({ secret_enc, secret_iv, ...row }) => ({
+        ...row,
+        secret: secret_enc && secret_iv
+          ? decryptProviderKey(String(secret_enc), String(secret_iv))
+          : null,
+      })));
     } catch (error) {
       return reply.status(500).send({ error: String(error) });
     }
@@ -51,6 +57,7 @@ export async function registerAdminKeyRoutes(app: FastifyInstance): Promise<void
 
       const rawKey = 'sk-' + randomBytes(48).toString('hex');
       const keyHash = createHash('sha256').update(rawKey).digest('hex');
+      const encryptedSecret = encryptProviderKey(rawKey);
       const keyPrefix = rawKey.slice(0, 8) + '...';
       const priority = parsePriority(body.priority);
       const providerIds = parseStringArray(body.provider_ids);
@@ -58,8 +65,8 @@ export async function registerAdminKeyRoutes(app: FastifyInstance): Promise<void
 
       await query(
         'INSERT INTO api_keys ' +
-        '(key_hash, key_prefix, name, description, is_active, priority, provider_ids, allowed_models) ' +
-        'VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+        '(key_hash, key_prefix, name, description, is_active, priority, provider_ids, allowed_models, secret_enc, secret_iv) ' +
+        'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
         [
           keyHash,
           keyPrefix,
@@ -69,6 +76,8 @@ export async function registerAdminKeyRoutes(app: FastifyInstance): Promise<void
           priority,
           providerIds,
           allowedModels,
+          encryptedSecret.encrypted,
+          encryptedSecret.iv,
         ]
       );
 
@@ -85,6 +94,32 @@ export async function registerAdminKeyRoutes(app: FastifyInstance): Promise<void
     } catch (error) {
       const message = String(error).replace(/^Error: /, '');
       return reply.status(isBadInput(message) ? 400 : 500).send({ error: message });
+    }
+  });
+
+  // POST /api/admin/keys/:id/regenerate
+  app.post('/api/admin/keys/:id/regenerate', async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      const existing = await query<{ id: string; name: string }>(
+        'SELECT id, name FROM api_keys WHERE id = $1',
+        [id],
+      );
+      if (!existing[0]) return reply.status(404).send({ error: 'API key not found' });
+
+      const rawKey = 'sk-' + randomBytes(48).toString('hex');
+      const keyHash = createHash('sha256').update(rawKey).digest('hex');
+      const encryptedSecret = encryptProviderKey(rawKey);
+      const keyPrefix = rawKey.slice(0, 8) + '...';
+      await query(
+        'UPDATE api_keys SET key_hash = $1, key_prefix = $2, secret_enc = $3, secret_iv = $4, updated_at = NOW() WHERE id = $5',
+        [keyHash, keyPrefix, encryptedSecret.encrypted, encryptedSecret.iv, id],
+      );
+      clearKeyCache();
+
+      return reply.send({ id, name: existing[0].name, key: rawKey, key_prefix: keyPrefix });
+    } catch (error) {
+      return reply.status(500).send({ error: String(error) });
     }
   });
 

@@ -84,6 +84,10 @@ const keysHtml = `<!doctype html>
     .chip { border-radius: 8px; color: #ddd6fe; background: rgba(167,139,250,.08); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .key-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); margin-top: 14px; padding-top: 13px; }
     .key-prefix { color: #7f8aa4; font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .persistent-secret { margin-top: 14px; padding: 12px; border: 1px solid rgba(74,222,181,.18); border-radius: 12px; background: rgba(20,184,166,.05); }
+    .persistent-secret-label { color: #a7f3d0; font-size: 11px; font-weight: 800; letter-spacing: .02em; margin-bottom: 8px; }
+    .persistent-secret-input { min-width: 0; }
+    .persistent-secret .secret-value { margin-top: 0; }
     .empty { padding: 46px 20px; border: 1px dashed rgba(255,255,255,.17); border-radius: 18px; text-align: center; color: var(--muted); }
     .empty strong { display: block; margin-bottom: 5px; color: var(--soft); }
     .auth-panel { display: none; margin-bottom: 20px; padding: 15px 17px; border: 1px solid rgba(251,191,105,.24); border-radius: 16px; background: rgba(245,158,11,.07); }
@@ -226,7 +230,7 @@ const keysHtml = `<!doctype html>
             <span id="form-status" class="status" role="status"></span>
           </div>
           <div id="secret-panel" class="secret-panel">
-            <strong>Copy this secret now. It will not be shown again.</strong>
+            <strong id="secret-title">Full client key. It remains visible to authenticated admins.</strong>
             <div class="secret-value"><input id="secret-value" readonly /><button id="copy-btn" class="btn btn-subtle" type="button">Copy</button></div>
           </div>
         </form>
@@ -346,7 +350,7 @@ const keysHtml = `<!doctype html>
         el('key-count').textContent = state.keys.length;
         el('enabled-count').textContent = state.keys.filter(key => key.is_active !== false).length;
         el('provider-count').textContent = state.providers.length;
-        el('list-caption').textContent = state.keys.length ? 'Secrets are shown only once at creation.' : 'No client keys yet. Create one on the left.';
+        el('list-caption').textContent = state.keys.length ? 'Full client secrets stay visible here after refresh. Regenerate a legacy key once to save its full secret.' : 'No client keys yet. Create one on the left.';
         const list = el('key-list');
         if (!state.keys.length) {
           list.innerHTML = '<div class="empty"><strong>No client keys yet</strong>Create a key and restrict it to the providers and models it needs.</div>';
@@ -357,9 +361,20 @@ const keysHtml = `<!doctype html>
           const models = key.allowed_models || [];
           const providerHtml = providers.length ? providers.map(item => '<span class="chip">' + escapeHtml(item) + '</span>').join('') : '<span class="hint">Legacy group assignment</span>';
           const modelHtml = models.length ? models.map(item => '<span class="chip">' + escapeHtml(item) + '</span>').join('') : '<span class="hint">All models</span>';
-          return '<article class="key-card"><div class="key-top"><div><div class="key-name">' + escapeHtml(key.name) + '</div><div class="key-description">' + escapeHtml(key.description || 'No description') + '</div><div class="key-meta"><span class="badge accent">Priority ' + escapeHtml(key.priority ?? 0) + '</span><span class="badge ' + (key.is_active === false ? 'bad' : 'good') + '">' + (key.is_active === false ? 'Disabled' : 'Enabled') + '</span></div></div><div class="button-row"><button class="btn btn-subtle edit-btn" data-id="' + escapeHtml(key.id) + '" type="button">Edit</button><button class="btn btn-danger delete-btn" data-id="' + escapeHtml(key.id) + '" type="button">Delete</button></div></div><div class="chip-list">' + providerHtml + '</div><div class="chip-list">' + modelHtml + '</div><div class="key-footer"><span class="key-prefix">' + escapeHtml(key.key_prefix) + '</span><button class="btn btn-subtle toggle-btn" data-id="' + escapeHtml(key.id) + '" data-active="' + (key.is_active !== false) + '" type="button">' + (key.is_active === false ? 'Enable' : 'Disable') + '</button></div></article>';
+          const secretHtml = key.secret
+            ? '<div class="persistent-secret"><div class="persistent-secret-label">Client API key · visible forever</div><div class="secret-value"><input class="persistent-secret-input" readonly value="' + escapeHtml(key.secret) + '"><button class="btn btn-subtle copy-persistent-btn" data-id="' + escapeHtml(key.id) + '" type="button">Copy</button></div></div>'
+            : '<div class="persistent-secret"><div class="persistent-secret-label">Client API key</div><div class="hint">No saved full key. Regenerate this key to make it visible here.</div></div>';
+          return '<article class="key-card"><div class="key-top"><div><div class="key-name">' + escapeHtml(key.name) + '</div><div class="key-description">' + escapeHtml(key.description || 'No description') + '</div><div class="key-meta"><span class="badge accent">Priority ' + escapeHtml(key.priority ?? 0) + '</span><span class="badge ' + (key.is_active === false ? 'bad' : 'good') + '">' + (key.is_active === false ? 'Disabled' : 'Enabled') + '</span></div></div><div class="button-row"><button class="btn btn-subtle edit-btn" data-id="' + escapeHtml(key.id) + '" type="button">Edit</button><button class="btn btn-subtle regenerate-btn" data-id="' + escapeHtml(key.id) + '" type="button">Regenerate key</button><button class="btn btn-danger delete-btn" data-id="' + escapeHtml(key.id) + '" type="button">Delete</button></div></div><div class="chip-list">' + providerHtml + '</div><div class="chip-list">' + modelHtml + '</div>' + secretHtml + '<div class="key-footer"><span class="key-prefix">' + escapeHtml(key.key_prefix) + '</span><button class="btn btn-subtle toggle-btn" data-id="' + escapeHtml(key.id) + '" data-active="' + (key.is_active !== false) + '" type="button">' + (key.is_active === false ? 'Enable' : 'Disable') + '</button></div></article>';
         }).join('');
         list.querySelectorAll('.edit-btn').forEach(button => button.addEventListener('click', () => editKey(button.dataset.id)));
+        list.querySelectorAll('.regenerate-btn').forEach(button => button.addEventListener('click', () => regenerateKey(button.dataset.id)));
+        list.querySelectorAll('.copy-persistent-btn').forEach(button => button.addEventListener('click', async () => {
+          const key = state.keys.find(item => item.id === button.dataset.id);
+          if (key?.secret) {
+            await navigator.clipboard.writeText(key.secret);
+            toast('API key copied.');
+          }
+        }));
         list.querySelectorAll('.delete-btn').forEach(button => button.addEventListener('click', () => deleteKey(button.dataset.id)));
         list.querySelectorAll('.toggle-btn').forEach(button => button.addEventListener('click', () => toggleKey(button.dataset.id, button.dataset.active !== 'true')));
       }
@@ -392,12 +407,20 @@ const keysHtml = `<!doctype html>
         el('key-priority').value = '0';
         el('key-active').checked = true;
         el('form-title').textContent = 'Create API key';
-        el('form-description').textContent = 'The secret is shown once after creation. Store it somewhere safe.';
+        el('form-description').textContent = 'The full client secret stays visible to authenticated admins and is stored encrypted when configured.';
         el('submit-btn').textContent = 'Create API key';
         el('clear-btn').textContent = 'Clear';
         el('secret-panel').className = 'secret-panel';
+        el('secret-title').textContent = 'Full client key. It remains visible to authenticated admins.';
         document.querySelectorAll('input[name="provider_id"]').forEach(input => { input.checked = false; });
         renderProviderChoices();
+      }
+
+      function showSecret(secret, title) {
+        el('secret-title').textContent = title;
+        el('secret-value').value = secret;
+        el('secret-panel').className = 'secret-panel visible';
+        el('secret-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
 
       function editKey(id) {
@@ -414,7 +437,7 @@ const keysHtml = `<!doctype html>
         document.querySelectorAll('input[name="provider_id"]').forEach(input => { input.checked = selected.has(input.value); });
         renderModelChoices();
         el('form-title').textContent = 'Edit API key';
-        el('form-description').textContent = 'Update access controls without revealing the secret.';
+        el('form-description').textContent = 'Update access controls. The full client secret stays visible in the key list.';
         el('submit-btn').textContent = 'Save changes';
         el('clear-btn').textContent = 'Cancel edit';
         el('key-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -442,8 +465,7 @@ const keysHtml = `<!doctype html>
           const wasEditing = Boolean(state.editingId);
           resetForm();
           if (!wasEditing && result.key) {
-            el('secret-value').value = result.key;
-            el('secret-panel').className = 'secret-panel visible';
+            showSecret(result.key, 'Client key created. The full secret remains visible in its key card.');
           }
           el('form-status').textContent = wasEditing ? 'API key updated.' : 'API key created.';
           el('form-status').className = 'status ok';
@@ -462,6 +484,17 @@ const keysHtml = `<!doctype html>
           await api('/api/admin/keys/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ is_active: enabled }) });
           toast(enabled ? 'API key enabled.' : 'API key disabled.');
           await load();
+        } catch (error) { toast(error.message, true); }
+      }
+
+      async function regenerateKey(id) {
+        const key = state.keys.find(item => item.id === id);
+        if (!key || !window.confirm('Regenerate this API key? The current key will stop working immediately.')) return;
+        try {
+          const result = await api('/api/admin/keys/' + encodeURIComponent(id) + '/regenerate', { method: 'POST' });
+          await load();
+          showSecret(result.key, 'New secret for ' + result.name + '. The full key remains visible in its key card.');
+          toast('Old API key revoked and replaced.');
         } catch (error) { toast(error.message, true); }
       }
 
