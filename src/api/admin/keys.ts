@@ -40,6 +40,18 @@ export async function registerAdminKeyRoutes(app: FastifyInstance): Promise<void
     }
   });
 
+  // GET /api/admin/keys/options — metadata for admin filters without returning client secrets.
+  app.get('/api/admin/keys/options', async (_request, reply) => {
+    try {
+      const rows = await query<Record<string, unknown>>(
+        'SELECT id, key_prefix, name, is_active FROM api_keys ORDER BY priority DESC, created_at DESC'
+      );
+      return reply.send(rows);
+    } catch (error) {
+      return reply.status(500).send({ error: String(error) });
+    }
+  });
+
   // POST /api/admin/keys
   app.post('/api/admin/keys', async (request, reply) => {
     try {

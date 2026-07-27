@@ -129,7 +129,7 @@ const adminHtml = String.raw`<!doctype html>
         <h1>Provider keys, in one calm place.</h1>
         <p class="lede">Connect OpenAI-compatible, Anthropic, Gemini, Antigravity CLI, or custom endpoints. Discover their models before you route traffic.</p>
       </div>
-      <div class="topbar-right"><nav class="nav" aria-label="Control plane"><a class="nav-link active" href="/">Providers</a><a class="nav-link" href="/keys">API keys</a></nav><div class="brand-mark" aria-label="Eter Router">ER</div></div>
+      <div class="topbar-right"><nav class="nav" aria-label="Control plane"><a class="nav-link active" href="/">Providers</a><a class="nav-link" href="/keys">API keys</a><a class="nav-link" href="/logs">Logs</a></nav><div class="brand-mark" aria-label="Eter Router">ER</div></div>
     </header>
 
     <section id="auth-panel" class="auth-panel" aria-live="polite">

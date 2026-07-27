@@ -17,6 +17,7 @@ import { query } from './db/pool.js';
 import { authenticateAdmin } from './auth/admin.js';
 import { registerAdminUiRoutes } from './web/admin-ui.js';
 import { registerAdminKeyUiRoutes } from './web/api-keys-ui.js';
+import { registerAdminLogsUiRoutes } from './web/logs-ui.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -101,6 +102,7 @@ async function main(): Promise<void> {
   await registerAdminStatsRoutes(app);
   await registerAdminUiRoutes(app);
   await registerAdminKeyUiRoutes(app);
+  await registerAdminLogsUiRoutes(app);
 
   // Start server
   try {

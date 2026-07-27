@@ -144,6 +144,7 @@ const keysHtml = `<!doctype html>
         <nav class="nav" aria-label="Control plane">
           <a class="nav-link" href="/">Providers</a>
           <a class="nav-link active" href="/keys">API keys</a>
+          <a class="nav-link" href="/logs">Logs</a>
         </nav>
         <div class="brand-mark" aria-label="Eter Router">ER</div>
       </div>
