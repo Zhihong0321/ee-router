@@ -6,6 +6,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   ADMIN_API_KEY: z.string().optional(),
+  ADMIN_PASSWORD: z.string().min(8).optional(),
+  SESSION_TTL_HOURS: z.coerce.number().int().positive().default(720),
   PROVIDER_ENCRYPTION_KEY: z.string().optional(),
   CORS_ORIGIN: z.string().default('*'),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),

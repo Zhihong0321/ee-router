@@ -16,12 +16,22 @@ import { registerAdminLogRoutes, registerAdminStatsRoutes } from './api/admin/lo
 import { registerAdminAgyRoutes } from './api/admin/agy.js';
 import { query } from './db/pool.js';
 import { authenticateAdmin } from './auth/admin.js';
+import { denyUnauthenticated, hasValidSession } from './auth/session.js';
+import { registerLoginRoutes } from './web/login-ui.js';
 import { registerAdminUiRoutes } from './web/admin-ui.js';
 import { registerAdminKeyUiRoutes } from './web/api-keys-ui.js';
 import { registerAdminLogsUiRoutes } from './web/logs-ui.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
+
+  // Fail closed: the service refuses to expose anything without an access password.
+  if (!env.ADMIN_PASSWORD) {
+    console.error(
+      '[fatal] ADMIN_PASSWORD is not set. Set it (minimum 8 characters) to protect this service before starting.'
+    );
+    process.exit(1);
+  }
 
   // Run database migrations
   console.log('[bootstrap] Running database migrations...');
@@ -86,13 +96,41 @@ async function main(): Promise<void> {
     timeWindow: '1 minute',
     allowList: request => request.url === '/health',
   });
+  // Password gate: one login unlocks the whole site for SESSION_TTL_HOURS.
+  const openPaths = new Set(['/health', '/login', '/logout']);
   app.addHook('onRequest', async (request, reply) => {
-    if (request.url.startsWith('/api/admin/')) {
-      await authenticateAdmin(request, reply);
+    if (request.method === 'OPTIONS') return;
+
+    const path = request.url.split('?')[0] ?? '/';
+    if (openPaths.has(path)) return;
+
+    // A valid password session unlocks everything, including /api/admin/*.
+    if (hasValidSession(request)) return;
+
+    // Machine traffic keeps using its own credentials: /v1/* is validated by the
+    // per-client API key, /api/admin/* by ADMIN_API_KEY when one is configured.
+    if (path.startsWith('/v1/')) {
+      if (request.headers.authorization) return;
+      await reply
+        .status(401)
+        .send({ error: { type: 'authentication_error', message: 'Missing or invalid Authorization header' } });
+      return;
     }
+
+    if (path.startsWith('/api/admin/')) {
+      if (env.ADMIN_API_KEY) {
+        await authenticateAdmin(request, reply);
+        return;
+      }
+      await denyUnauthenticated(request, reply);
+      return;
+    }
+
+    await denyUnauthenticated(request, reply);
   });
 
   // Register routes
+  await registerLoginRoutes(app);
   await registerHealthRoutes(app);
   await registerOpenAIRoutes(app);
   await registerAnthropicRoutes(app);

@@ -4,12 +4,14 @@
 
 Connect this GitHub repository to Railway. The included `Dockerfile` builds TypeScript, runs as the unprivileged `node` user, uses Railway's injected `PORT`, and binds to `0.0.0.0`.
 
-No application variable is required for the process to start. `NODE_ENV=production` is already set by the Docker image.
+`ADMIN_PASSWORD` is required for the process to start. `NODE_ENV=production` is already set by the Docker image.
 
 ## Variables you control
 
+- `ADMIN_PASSWORD`: **required**, minimum 8 characters. The site password. The server refuses to start without it. Every route except `/health`, `/login`, and `/logout` requires either a password session or machine credentials.
+- `SESSION_TTL_HOURS`: optional. Defaults to `720` (30 days) — how long one sign-in keeps the browser unlocked.
 - `DATABASE_URL`: optional. Add Railway Postgres and reference `${{Postgres.DATABASE_URL}}` when you want persistence and functional API/admin data routes. Without it, the server starts and `/health` reports `database: not_configured`.
-- `ADMIN_API_KEY`: optional. When absent or blank, admin routes are open. When set, `/api/admin/*` requires `Authorization: Bearer <your value>`. There is no minimum length rule.
+- `ADMIN_API_KEY`: optional. Machine access to `/api/admin/*` via `Authorization: Bearer <your value>`, for scripts that cannot hold a session cookie. Not needed when signing in through the browser.
 - `PROVIDER_ENCRYPTION_KEY`: optional. Exactly 64 hexadecimal characters enables AES-256-GCM provider-key encryption. Blank or any other value uses plaintext provider-key storage and does not block startup.
 - `CORS_ORIGIN`: optional. Defaults to `*`; alternatively use a comma-separated list of browser origins.
 - `RATE_LIMIT_MAX`: optional. Defaults to 100 requests per IP per minute.
@@ -24,7 +26,9 @@ The placeholders in `.env.example` are documentation, not values to paste into R
 
 ## Provider console
 
-Open the deployed service URL at `/` to use the provider console. It supports OpenAI-compatible, Anthropic, Gemini, a local Antigravity CLI (`agy`) runtime, and custom endpoints, model discovery, and optional provider-key expiry deadlines. If `ADMIN_API_KEY` is configured, enter it in the console before managing providers.
+Open the deployed service URL. Any page redirects to `/login` until you enter `ADMIN_PASSWORD`; the session cookie is `HttpOnly`, `SameSite=Lax`, `Secure` in production, and lasts `SESSION_TTL_HOURS` (30 days by default), so you sign in once per browser rather than per page. `POST /logout` clears it, and changing `ADMIN_PASSWORD` invalidates every existing session. Failed logins are throttled to 8 per IP per 15 minutes.
+
+Once signed in, `/` is the provider console. It supports OpenAI-compatible, Anthropic, Gemini, a local Antigravity CLI (`agy`) runtime, and custom endpoints, model discovery, and optional provider-key expiry deadlines. If `ADMIN_API_KEY` is configured, enter it in the console before managing providers.
 
 Antigravity runs inside the same EE Router container. Its provider location is `local://agy`; it does not use a Base URL or provider API key. The image installs `/usr/local/bin/agy`, runs it as the unprivileged `node` user, keeps the native OAuth profile under the `/storage` persistent volume, and creates per-request scratch directories under `/tmp/agyproxy`.
 
