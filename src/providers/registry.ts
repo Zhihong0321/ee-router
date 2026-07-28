@@ -3,6 +3,7 @@ import { OpenAIAdapter } from './openai-adapter.js';
 import { AnthropicAdapter } from './anthropic-adapter.js';
 import { CustomProviderAdapter } from './custom-adapter.js';
 import { GeminiAdapter } from './gemini-adapter.js';
+import { AgyCliAdapter } from './agy-cli-adapter.js';
 import { decryptProviderKey } from '../security/provider-key.js';
 
 export class ProviderRegistry {
@@ -21,8 +22,7 @@ export class ProviderRegistry {
         adapter = new GeminiAdapter(config);
         break;
       case 'agy-cli':
-        // The agy CLI is exposed through the OpenAI-compatible gemini-to-api bridge.
-        adapter = new OpenAIAdapter(config);
+        adapter = new AgyCliAdapter(config);
         break;
       case 'custom':
         adapter = new CustomProviderAdapter(config);

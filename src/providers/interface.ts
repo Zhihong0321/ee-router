@@ -78,6 +78,9 @@ export interface ProviderAdapter {
   /** Parse a non-streaming response */
   translateResponse(raw: unknown): NormalizedResponse;
 
+  /** Execute an in-process or local-provider request without an HTTP upstream. */
+  execute?(requestBody: unknown): Promise<NormalizedResponse>;
+
   /** Health check: returns status and measured latency */
   checkHealth(): Promise<{ status: 'healthy' | 'unhealthy'; latency_ms: number; error?: string }>;
 

@@ -1,3 +1,4 @@
+import { AGY_MODELS } from './agy-cli-adapter.js';
 import { type ProviderConfig } from './interface.js';
 
 export interface ModelDiscoveryInput {
@@ -32,6 +33,8 @@ function parseModelIds(providerType: ProviderConfig['provider_type'], payload: u
 }
 
 export async function discoverModels(input: ModelDiscoveryInput): Promise<string[]> {
+  if (input.provider_type === 'agy-cli') return [...AGY_MODELS];
+
   const url = new URL(modelsUrl(input.base_url));
   const headers: Record<string, string> = {};
 

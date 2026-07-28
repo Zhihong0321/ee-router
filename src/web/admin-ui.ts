@@ -164,14 +164,14 @@ const adminHtml = String.raw`<!doctype html>
           <div class="field">
             <label for="base-url">Base URL</label>
             <div class="url-row">
-              <input id="base-url" name="base_url" type="url" required placeholder="https://api.openai.com/v1" />
+              <input id="base-url" name="base_url" type="text" required placeholder="https://api.openai.com/v1" />
               <button id="detect-btn" class="btn btn-subtle" type="button">Detect models</button>
             </div>
             <p class="hint">Use the API root, not the final /models or /chat/completions path.</p>
           </div>
           <div class="field">
             <label for="api-key">Provider API key</label>
-            <input id="api-key" name="api_key" type="password" autocomplete="new-password" placeholder="sk-… / Anthropic / Gemini / agy bridge key" />
+            <input id="api-key" name="api_key" type="password" autocomplete="new-password" placeholder="Provider API key (not used by local AGY)" />
           </div>
           <div class="field">
             <label for="models">Available models</label>
@@ -221,7 +221,7 @@ const adminHtml = String.raw`<!doctype html>
         'openai-compatible': 'https://api.openai.com/v1',
         anthropic: 'https://api.anthropic.com/v1',
         gemini: 'https://generativelanguage.googleapis.com/v1beta',
-        'agy-cli': '',
+        'agy-cli': 'local://agy',
         custom: ''
       };
       const labels = {
@@ -335,7 +335,8 @@ const adminHtml = String.raw`<!doctype html>
         el('submit-btn').textContent = 'Add provider';
         el('clear-btn').textContent = 'Clear';
         el('api-key').required = true;
-        el('api-key').placeholder = 'sk-… / Anthropic / Gemini / agy bridge key';
+        el('api-key').disabled = false;
+        el('api-key').placeholder = 'Provider API key';
         el('form-status').textContent = '';
         setDefaults();
       }
@@ -364,20 +365,31 @@ const adminHtml = String.raw`<!doctype html>
         el('clear-btn').textContent = 'Cancel edit';
         el('form-status').textContent = 'Editing ' + provider.name;
         el('form-status').className = 'status';
+        setDefaults();
         el('provider-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
 
       function setDefaults() {
         const type = el('provider-type').value;
         const input = el('base-url');
-        if (!input.value || Object.values(defaults).includes(input.value)) input.value = defaults[type] || '';
+        const localAgy = type === 'agy-cli';
+        if (localAgy) {
+          input.value = 'local://agy';
+        } else if (!input.value || Object.values(defaults).includes(input.value)) {
+          input.value = defaults[type] || '';
+        }
+        input.readOnly = localAgy;
+        el('api-key').required = !state.editingId && !localAgy;
+        el('api-key').disabled = localAgy;
+        el('api-key').placeholder = localAgy ? 'Not used — AGY runs inside EE Router' : (state.editingId ? 'Leave blank to keep the saved key' : 'Provider API key');
       }
 
       async function detectModels() {
         const button = el('detect-btn');
         const baseUrl = el('base-url').value.trim();
         const apiKey = el('api-key').value.trim();
-        if (!baseUrl || (!apiKey && !state.editingId)) {
+        const localAgy = el('provider-type').value === 'agy-cli';
+        if (!baseUrl || (!localAgy && !apiKey && !state.editingId)) {
           el('form-status').textContent = state.editingId ? 'Enter a base URL, or provide a replacement API key.' : 'Enter a base URL and API key first.';
           el('form-status').className = 'status error';
           return;
@@ -416,7 +428,8 @@ const adminHtml = String.raw`<!doctype html>
         const button = el('submit-btn');
         const isEditing = Boolean(state.editingId);
         const apiKey = el('api-key').value.trim();
-        if (!isEditing && !apiKey) {
+        const localAgy = el('provider-type').value === 'agy-cli';
+        if (!isEditing && !localAgy && !apiKey) {
           el('form-status').textContent = 'Enter a provider API key first.';
           el('form-status').className = 'status error';
           return;

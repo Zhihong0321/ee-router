@@ -1,7 +1,147 @@
-import { type ProviderAdapter } from '../providers/interface.js';
+import { type NormalizedResponse, type ProviderAdapter } from '../providers/interface.js';
 import { type FastifyReply } from 'fastify';
 
 export type ApiFormat = 'openai' | 'anthropic';
+
+type ProxyResult = {
+  ttfbMs: number;
+  status: 'success' | 'error' | 'timeout';
+  errorMessage?: string;
+};
+
+function normalizedResponsePayload(
+  normalized: NormalizedResponse,
+  model: string,
+  format: ApiFormat,
+): Record<string, unknown> {
+  const choice = normalized.choices[0] ?? {
+    index: 0,
+    message: { role: 'assistant', content: '' },
+    finish_reason: null,
+  };
+
+  if (format === 'anthropic') {
+    return {
+      id: normalized.id,
+      type: 'message',
+      role: 'assistant',
+      model,
+      content: [{ type: 'text', text: choice.message.content ?? '' }],
+      stop_reason: choice.finish_reason,
+      stop_sequence: null,
+      usage: normalized.usage ? {
+        input_tokens: normalized.usage.prompt_tokens,
+        output_tokens: normalized.usage.completion_tokens,
+      } : undefined,
+    };
+  }
+
+  return {
+    id: normalized.id,
+    object: 'chat.completion',
+    created: normalized.created,
+    model,
+    choices: [{
+      index: choice.index,
+      message: choice.message,
+      finish_reason: choice.finish_reason,
+    }],
+    usage: normalized.usage,
+  };
+}
+
+function localExecutionError(error: unknown, startedAt: number): ProxyResult {
+  const code = (error as { code?: string }).code;
+  const statusCode = (error as { status?: number }).status;
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    ttfbMs: Date.now() - startedAt,
+    status: code === 'upstream_timeout' ? 'timeout' : 'error',
+    errorMessage: statusCode && statusCode >= 400 && statusCode < 500
+      ? `Upstream ${statusCode}: ${message}`
+      : message,
+  };
+}
+
+async function handleLocalStreaming(
+  adapter: ProviderAdapter,
+  requestBody: unknown,
+  callFormat: ApiFormat,
+  reply: FastifyReply,
+  model: string,
+  startedAt: number,
+): Promise<ProxyResult> {
+  try {
+    const normalized = await adapter.execute!(requestBody);
+    const choice = normalized.choices[0];
+    const content = choice?.message.content ?? '';
+    const finishReason = choice?.finish_reason ?? 'stop';
+    const ttfbMs = Date.now() - startedAt;
+
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    });
+
+    if (callFormat === 'anthropic') {
+      reply.raw.write('event: message_start\ndata: ' + JSON.stringify({
+        type: 'message_start',
+        message: {
+          id: normalized.id,
+          type: 'message',
+          role: 'assistant',
+          model,
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: normalized.usage?.prompt_tokens ?? 0, output_tokens: 0 },
+        },
+      }) + '\n\n');
+      reply.raw.write('event: content_block_start\ndata: ' + JSON.stringify({
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'text', text: '' },
+      }) + '\n\n');
+      if (content) {
+        reply.raw.write('event: content_block_delta\ndata: ' + JSON.stringify({
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: content },
+        }) + '\n\n');
+      }
+      reply.raw.write('event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n');
+      reply.raw.write('event: message_delta\ndata: ' + JSON.stringify({
+        type: 'message_delta',
+        delta: { stop_reason: finishReason, stop_sequence: null },
+        usage: { output_tokens: normalized.usage?.completion_tokens ?? 0 },
+      }) + '\n\n');
+      reply.raw.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+    } else {
+      reply.raw.write('data: ' + JSON.stringify({
+        id: normalized.id,
+        object: 'chat.completion.chunk',
+        created: normalized.created,
+        model,
+        choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }],
+      }) + '\n\n');
+      reply.raw.write('data: ' + JSON.stringify({
+        id: normalized.id,
+        object: 'chat.completion.chunk',
+        created: normalized.created,
+        model,
+        choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
+      }) + '\n\n');
+      reply.raw.write('data: [DONE]\n\n');
+    }
+
+    reply.raw.end();
+    return { ttfbMs, status: 'success' };
+  } catch (error) {
+    return localExecutionError(error, startedAt);
+  }
+}
 
 function upstreamUrl(adapter: ProviderAdapter, model: string, stream: boolean): string {
   const baseUrl = adapter.config.base_url.replace(/\/$/, '');
@@ -66,8 +206,13 @@ export async function handleStreamingProxy(
   model?: string,
 ): Promise<{ ttfbMs: number; status: 'success' | 'error' | 'timeout'; errorMessage?: string }> {
   const requestedModel = model ?? adapter.config.models[0] ?? '';
-  const url = upstreamUrl(adapter, requestedModel, true);
   const start = Date.now();
+
+  if (adapter.execute) {
+    return handleLocalStreaming(adapter, requestBody, callFormat, reply, requestedModel, start);
+  }
+
+  const url = upstreamUrl(adapter, requestedModel, true);
 
   try {
     const response = await fetch(url, {
@@ -159,8 +304,20 @@ export async function handleNonStreamingProxy(
   model?: string,
 ): Promise<{ ttfbMs: number; status: 'success' | 'error' | 'timeout'; errorMessage?: string }> {
   const requestedModel = model ?? adapter.config.models[0] ?? '';
-  const url = upstreamUrl(adapter, requestedModel, false);
   const start = Date.now();
+
+  if (adapter.execute) {
+    try {
+      const normalized = await adapter.execute(requestBody);
+      const ttfbMs = Date.now() - start;
+      await reply.send(normalizedResponsePayload(normalized, requestedModel, callFormat));
+      return { ttfbMs, status: 'success' };
+    } catch (error) {
+      return localExecutionError(error, start);
+    }
+  }
+
+  const url = upstreamUrl(adapter, requestedModel, false);
 
   try {
     const response = await fetch(url, {

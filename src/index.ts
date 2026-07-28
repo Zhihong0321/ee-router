@@ -13,6 +13,7 @@ import { registerAdminKeyRoutes } from './api/admin/keys.js';
 import { registerAdminProviderRoutes } from './api/admin/providers.js';
 import { registerAdminGroupRoutes } from './api/admin/groups.js';
 import { registerAdminLogRoutes, registerAdminStatsRoutes } from './api/admin/logs.js';
+import { registerAdminAgyRoutes } from './api/admin/agy.js';
 import { query } from './db/pool.js';
 import { authenticateAdmin } from './auth/admin.js';
 import { registerAdminUiRoutes } from './web/admin-ui.js';
@@ -100,6 +101,7 @@ async function main(): Promise<void> {
   await registerAdminGroupRoutes(app);
   await registerAdminLogRoutes(app);
   await registerAdminStatsRoutes(app);
+  await registerAdminAgyRoutes(app);
   await registerAdminUiRoutes(app);
   await registerAdminKeyUiRoutes(app);
   await registerAdminLogsUiRoutes(app);

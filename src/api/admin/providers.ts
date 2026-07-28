@@ -21,7 +21,8 @@ function validateExpiry(value: unknown): string | null {
   return date.toISOString();
 }
 
-function validateBaseUrl(value: unknown): string {
+function validateBaseUrl(value: unknown, providerType: ProviderConfig['provider_type']): string {
+  if (providerType === 'agy-cli') return 'local://agy';
   if (!value) throw new Error('base_url is required');
   const url = new URL(String(value));
   if (!['http:', 'https:'].includes(url.protocol)) {
@@ -59,10 +60,16 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
   app.post('/api/admin/providers/discover', async (request, reply) => {
     try {
       const body = request.body as { provider_type?: string; base_url?: string; api_key?: string };
-      if (!body.api_key) return reply.status(400).send({ error: 'api_key is required' });
       const providerType = validateProviderType(body.provider_type);
-      const baseUrl = validateBaseUrl(body.base_url);
-      const models = await discoverModels({ provider_type: providerType, base_url: baseUrl, api_key: body.api_key });
+      if (providerType !== 'agy-cli' && !body.api_key) {
+        return reply.status(400).send({ error: 'api_key is required' });
+      }
+      const baseUrl = validateBaseUrl(body.base_url, providerType);
+      const models = await discoverModels({
+        provider_type: providerType,
+        base_url: baseUrl,
+        api_key: body.api_key ?? '',
+      });
       return reply.send({ models });
     } catch (error) {
       const message = String(error).replace(/^Error: /, '');
@@ -88,8 +95,10 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
       if (!existing) return reply.status(404).send({ error: 'provider not found' });
 
       const providerType = validateProviderType(body.provider_type ?? existing.provider_type);
-      const baseUrl = validateBaseUrl(body.base_url ?? existing.base_url);
-      const apiKey = body.api_key?.trim() || decryptProviderKey(existing.api_key_enc, existing.api_key_iv);
+      const baseUrl = validateBaseUrl(body.base_url ?? existing.base_url, providerType);
+      const apiKey = providerType === 'agy-cli'
+        ? ''
+        : body.api_key?.trim() || decryptProviderKey(existing.api_key_enc, existing.api_key_iv);
       const models = await discoverModels({ provider_type: providerType, base_url: baseUrl, api_key: apiKey });
       return reply.send({ models });
     } catch (error) {
@@ -105,7 +114,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         name: string;
         provider_type?: string;
         base_url: string;
-        api_key: string;
+        api_key?: string;
         models?: unknown;
         api_key_expires_at?: string | null;
         timeout_ms?: number;
@@ -113,15 +122,16 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         extra_headers?: Record<string, string>;
       };
 
-      if (!body.name || !body.api_key) {
+      const providerType = validateProviderType(body.provider_type);
+      if (!body.name || (providerType !== 'agy-cli' && !body.api_key)) {
         return reply.status(400).send({ error: 'name and api_key are required' });
       }
 
-      const providerType = validateProviderType(body.provider_type);
-      const baseUrl = validateBaseUrl(body.base_url);
+      const baseUrl = validateBaseUrl(body.base_url, providerType);
       const models = parseModels(body.models);
       const expiresAt = validateExpiry(body.api_key_expires_at);
-      const credential = encryptProviderKey(body.api_key);
+      const apiKey = body.api_key?.trim() || 'local-agy';
+      const credential = encryptProviderKey(apiKey);
       const timeoutMs = body.timeout_ms ?? 60_000;
       const maxRetries = body.max_retries ?? 2;
 
@@ -140,7 +150,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
           timeoutMs,
           maxRetries,
           JSON.stringify(body.extra_headers ?? {}),
-          `key-${body.api_key.slice(0, 4)}…`,
+          providerType === 'agy-cli' ? 'local' : `key-${apiKey.slice(0, 4)}…`,
         ]
       );
 
@@ -149,7 +159,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         name: body.name,
         provider_type: providerType,
         base_url: baseUrl,
-        api_key: body.api_key,
+        api_key: apiKey,
         models,
         api_key_expires_at: expiresAt,
         timeout_ms: timeoutMs,
@@ -205,7 +215,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
       if (!name) return reply.status(400).send({ error: 'name is required' });
 
       const providerType = validateProviderType(body.provider_type ?? existing.provider_type);
-      const baseUrl = validateBaseUrl(body.base_url ?? existing.base_url);
+      const baseUrl = validateBaseUrl(body.base_url ?? existing.base_url, providerType);
       const models = body.models === undefined ? existing.models : parseModels(body.models);
       const expiresAt = body.api_key_expires_at === undefined
         ? validateExpiry(existing.api_key_expires_at)
