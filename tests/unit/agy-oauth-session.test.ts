@@ -56,8 +56,8 @@ describe('AgyOAuthSessionManager', () => {
     });
     expect(started.auth_url).toContain('https://accounts.google.com/');
     expect(spawnProcess).toHaveBeenCalledWith(
-      '/usr/local/bin/agy',
-      expect.arrayContaining(['-p', '--model', 'gemini-3.6-flash-low']),
+      '/usr/bin/script',
+      expect.arrayContaining(['-qefc', '/usr/local/bin/agy', '/dev/null']),
       expect.objectContaining({ shell: false, stdio: ['pipe', 'pipe', 'pipe'] }),
     );
 

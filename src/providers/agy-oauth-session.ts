@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { existsSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,7 @@ import { AgyDiagnosticStore, getDefaultAgyDiagnosticStore } from './agy-diagnost
 const AUTH_URL_RE = /https:\/\/accounts\.google\.com\/[^\s]+/;
 const MAX_CAPTURE_BYTES = 128 * 1024;
 const START_TIMEOUT_MS = 10_000;
-const SESSION_TIMEOUT_MS = 75_000;
+const SESSION_TIMEOUT_MS = 5 * 60_000;
 const CODE_RE = /^[A-Za-z0-9._~+/=-]{8,4096}$/;
 
 export type AgyOAuthSessionState =
@@ -52,6 +53,7 @@ export interface AgyOAuthSessionManagerOptions {
   environment?: NodeJS.ProcessEnv;
   spawnProcess?: SpawnOAuth;
   diagnosticStore?: AgyDiagnosticStore | null;
+  ptyBinary?: string;
 }
 
 interface ActiveSession {
@@ -72,6 +74,8 @@ interface ActiveSession {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   timer: NodeJS.Timeout;
+  credentialTimer: NodeJS.Timeout;
+  suppressOutput: boolean;
 }
 
 function minimalEnvironment(source: NodeJS.ProcessEnv, home: string): NodeJS.ProcessEnv {
@@ -91,6 +95,7 @@ function safeFailureMessage(output: string): string {
 
 export class AgyOAuthSessionManager implements AgyOAuthController {
   private readonly binary: string;
+  private readonly ptyBinary: string;
   private readonly home: string;
   private readonly scratchRoot: string;
   private readonly environment: NodeJS.ProcessEnv;
@@ -100,6 +105,7 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
 
   constructor(options: AgyOAuthSessionManagerOptions = {}) {
     this.binary = options.binary ?? process.env.AGY_BIN ?? 'agy';
+    this.ptyBinary = options.ptyBinary ?? '/usr/bin/script';
     this.home = options.home ?? process.env.AGY_HOME ?? process.env.HOME ?? '/storage';
     this.scratchRoot = options.scratchRoot ?? process.env.AGY_SCRATCH_ROOT ?? join(tmpdir(), 'agyproxy');
     this.environment = options.environment ?? process.env;
@@ -118,19 +124,8 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
     const scratch = await mkdtemp(join(this.scratchRoot, 'oauth-'));
     const id = randomUUID();
     const startedAt = Date.now();
-    const args = [
-      '-p',
-      'Reply exactly: EE_ROUTER_AGY_OAUTH_READY',
-      '--model',
-      'gemini-3.6-flash-low',
-      '--sandbox',
-      '--dangerously-skip-permissions',
-      '--print-timeout',
-      '180000ms',
-      '--log-file',
-      join(scratch, 'agy-oauth.log'),
-    ];
-    const child = this.spawnProcess(this.binary, args, {
+    const args = ['-qefc', this.binary, '/dev/null'];
+    const child = this.spawnProcess(this.ptyBinary, args, {
       cwd: scratch,
       env: minimalEnvironment(this.environment, this.home),
       shell: false,
@@ -160,7 +155,28 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
           setTimeout(() => child.kill('SIGKILL'), 3_000).unref();
         }
       }, SESSION_TIMEOUT_MS),
+      credentialTimer: setInterval(() => undefined, SESSION_TIMEOUT_MS),
+      suppressOutput: false,
     };
+    clearInterval(session.credentialTimer);
+    session.credentialTimer = setInterval(() => {
+      const credentialPath = join(this.home, '.gemini', 'oauth_creds.json');
+      if (!existsSync(credentialPath)) return;
+      try {
+        if (statSync(credentialPath).size < 100) return;
+      } catch {
+        return;
+      }
+      if (['starting', 'waiting', 'completing'].includes(session.state)) {
+        session.state = 'authenticated';
+        session.message = 'Antigravity OAuth completed successfully';
+        session.finishedAt = Date.now();
+        clearTimeout(session.timer);
+        clearInterval(session.credentialTimer);
+        child.kill('SIGTERM');
+      }
+    }, 500);
+    session.credentialTimer.unref();
     session.timer.unref();
     this.current = session;
 
@@ -168,7 +184,7 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
       const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       const byteKey = target === 'stdout' ? 'stdoutBytes' : 'stderrBytes';
       session[byteKey] += data.length;
-      if (session[byteKey] <= MAX_CAPTURE_BYTES) session[target].push(data);
+      if (!session.suppressOutput && session[byteKey] <= MAX_CAPTURE_BYTES) session[target].push(data);
       const combined = Buffer.concat([...session.stdout, ...session.stderr]).toString('utf8');
       const match = combined.match(AUTH_URL_RE);
       if (match && !session.authUrl) {
@@ -185,14 +201,16 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
       session.message = `Could not start Antigravity OAuth: ${error.message}`;
       session.finishedAt = Date.now();
       clearTimeout(session.timer);
+      clearInterval(session.credentialTimer);
     });
     child.once('close', (code, signal) => {
       session.exitCode = code;
       session.signal = signal;
       session.finishedAt = Date.now();
       clearTimeout(session.timer);
+      clearInterval(session.credentialTimer);
       const output = Buffer.concat([...session.stdout, ...session.stderr]).toString('utf8');
-      if (!['expired', 'cancelled'].includes(session.state)) {
+      if (!['expired', 'cancelled', 'authenticated'].includes(session.state)) {
         if (code === 0) {
           session.state = 'authenticated';
           session.message = 'Antigravity OAuth completed successfully';
@@ -227,6 +245,7 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
     const normalized = code.trim();
     if (!CODE_RE.test(normalized)) throw new Error('Invalid OAuth authorization code format');
     if (!session.child.stdin.writable) throw new Error('Antigravity OAuth input is no longer available');
+    session.suppressOutput = true;
     session.child.stdin.write(normalized + '\n');
     session.state = 'completing';
     session.message = 'Authorization code submitted; waiting for Antigravity verification';
@@ -239,6 +258,7 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
     session.message = 'Antigravity OAuth session cancelled';
     session.finishedAt = Date.now();
     clearTimeout(session.timer);
+    clearInterval(session.credentialTimer);
     session.child.kill('SIGTERM');
     return this.snapshot(session);
   }
@@ -277,7 +297,7 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
         startedAt: session.startedAt,
         finishedAt,
         status: session.state === 'authenticated' ? 'success' : session.state === 'expired' ? 'timeout' : 'error',
-        binary: this.binary,
+        binary: this.ptyBinary,
         args: session.args,
         cwdLabel: 'oauth-',
         home: this.home,
