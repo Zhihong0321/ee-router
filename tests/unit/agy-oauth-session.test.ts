@@ -1,10 +1,14 @@
 import { EventEmitter } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgyOAuthSessionManager } from '../../src/providers/agy-oauth-session.js';
 
 const managers: AgyOAuthSessionManager[] = [];
+const temporaryRoots: string[] = [];
 
 function fakeChild(): ChildProcessWithoutNullStreams {
   const child = new EventEmitter() as unknown as ChildProcessWithoutNullStreams;
@@ -18,18 +22,21 @@ function fakeChild(): ChildProcessWithoutNullStreams {
   return child;
 }
 
-afterEach(() => {
+afterEach(async () => {
   for (const manager of managers.splice(0)) {
     const session = manager.status();
     if (session && ['starting', 'waiting', 'completing'].includes(session.state)) {
       manager.cancel(session.session_id);
     }
   }
+  await Promise.all(temporaryRoots.splice(0).map(root => rm(root, { recursive: true, force: true })));
   vi.restoreAllMocks();
 });
 
 describe('AgyOAuthSessionManager', () => {
   it('exposes only the consent URL and accepts a bounded code through stdin', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'eter-agy-oauth-manager-'));
+    temporaryRoots.push(home);
     const child = fakeChild();
     const spawnProcess = vi.fn(() => {
       queueMicrotask(() => {
@@ -42,7 +49,7 @@ describe('AgyOAuthSessionManager', () => {
     });
     const manager = new AgyOAuthSessionManager({
       binary: '/usr/local/bin/agy',
-      home: '/storage',
+      home,
       spawnProcess,
       diagnosticStore: null,
     });
@@ -56,8 +63,8 @@ describe('AgyOAuthSessionManager', () => {
     });
     expect(started.auth_url).toContain('https://accounts.google.com/');
     expect(spawnProcess).toHaveBeenCalledWith(
-      '/usr/bin/script',
-      expect.arrayContaining(['-qefc', '/usr/local/bin/agy', '/dev/null']),
+      '/usr/local/bin/agy',
+      expect.arrayContaining(['-p', '--model', 'gemini-3.6-flash-low']),
       expect.objectContaining({ shell: false, stdio: ['pipe', 'pipe', 'pipe'] }),
     );
 
@@ -78,6 +85,8 @@ describe('AgyOAuthSessionManager', () => {
   });
 
   it('rejects arbitrary input and prevents concurrent OAuth processes', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'eter-agy-oauth-manager-'));
+    temporaryRoots.push(home);
     const child = fakeChild();
     const spawnProcess = vi.fn(() => {
       queueMicrotask(() => {
@@ -86,6 +95,7 @@ describe('AgyOAuthSessionManager', () => {
       return child;
     });
     const manager = new AgyOAuthSessionManager({
+      home,
       spawnProcess,
       diagnosticStore: null,
     });

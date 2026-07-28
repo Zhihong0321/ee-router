@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgyDiagnosticStore, getDefaultAgyDiagnosticStore } from './agy-diagnostics.js';
@@ -53,7 +53,6 @@ export interface AgyOAuthSessionManagerOptions {
   environment?: NodeJS.ProcessEnv;
   spawnProcess?: SpawnOAuth;
   diagnosticStore?: AgyDiagnosticStore | null;
-  ptyBinary?: string;
 }
 
 interface ActiveSession {
@@ -95,7 +94,6 @@ function safeFailureMessage(output: string): string {
 
 export class AgyOAuthSessionManager implements AgyOAuthController {
   private readonly binary: string;
-  private readonly ptyBinary: string;
   private readonly home: string;
   private readonly scratchRoot: string;
   private readonly environment: NodeJS.ProcessEnv;
@@ -105,7 +103,6 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
 
   constructor(options: AgyOAuthSessionManagerOptions = {}) {
     this.binary = options.binary ?? process.env.AGY_BIN ?? 'agy';
-    this.ptyBinary = options.ptyBinary ?? '/usr/bin/script';
     this.home = options.home ?? process.env.AGY_HOME ?? process.env.HOME ?? '/storage';
     this.scratchRoot = options.scratchRoot ?? process.env.AGY_SCRATCH_ROOT ?? join(tmpdir(), 'agyproxy');
     this.environment = options.environment ?? process.env;
@@ -124,8 +121,27 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
     const scratch = await mkdtemp(join(this.scratchRoot, 'oauth-'));
     const id = randomUUID();
     const startedAt = Date.now();
-    const args = ['-qefc', this.binary, '/dev/null'];
-    const child = this.spawnProcess(this.ptyBinary, args, {
+    const profileRoot = join(this.home, '.gemini');
+    await mkdir(profileRoot, { recursive: true, mode: 0o700 });
+    const configRoot = join(profileRoot, 'config');
+    try {
+      await rename(configRoot, join(profileRoot, `config.oauth-backup-${id}`));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const args = [
+      '-p',
+      'Reply exactly: EE_ROUTER_AGY_OAUTH_READY',
+      '--model',
+      'gemini-3.6-flash-low',
+      '--sandbox',
+      '--dangerously-skip-permissions',
+      '--print-timeout',
+      '180000ms',
+      '--log-file',
+      join(scratch, 'agy-oauth.log'),
+    ];
+    const child = this.spawnProcess(this.binary, args, {
       cwd: scratch,
       env: minimalEnvironment(this.environment, this.home),
       shell: false,
@@ -297,7 +313,7 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
         startedAt: session.startedAt,
         finishedAt,
         status: session.state === 'authenticated' ? 'success' : session.state === 'expired' ? 'timeout' : 'error',
-        binary: this.ptyBinary,
+        binary: this.binary,
         args: session.args,
         cwdLabel: 'oauth-',
         home: this.home,
