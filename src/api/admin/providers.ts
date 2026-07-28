@@ -142,6 +142,25 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         );
       }
 
+      // Pricing is intentionally retroactive: when an operator corrects a model's
+      // rate, every historical log for that routed provider/model is recalculated.
+      // Logs without usage remain unpriced because there is nothing to calculate.
+      await query(
+        `UPDATE request_logs AS logs
+         SET input_cost_per_1m_tokens = costs.input_cost_per_1m_tokens,
+             output_cost_per_1m_tokens = costs.output_cost_per_1m_tokens,
+             cost_usd = (
+               (COALESCE(logs.prompt_tokens, 0) * costs.input_cost_per_1m_tokens) +
+               (COALESCE(logs.completion_tokens, 0) * costs.output_cost_per_1m_tokens)
+             ) / 1000000.0
+         FROM provider_model_costs AS costs
+         WHERE logs.provider_id = costs.provider_id
+           AND logs.model = costs.model
+           AND costs.provider_id = $1
+           AND (logs.prompt_tokens IS NOT NULL OR logs.completion_tokens IS NOT NULL)`,
+        [id],
+      );
+
       const modelCosts = await loadModelCosts(id);
       providerRegistry.setModelCosts(id, modelCosts);
       return reply.send({ id, model_costs: modelCosts });
