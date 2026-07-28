@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -82,6 +82,20 @@ describe('AgyOAuthSessionManager', () => {
       state: 'authenticated',
       message: 'Antigravity OAuth completed successfully',
     });
+  });
+
+  it('refuses to replace an existing native AGY session', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'eter-agy-oauth-manager-'));
+    temporaryRoots.push(home);
+    const nativeRoot = join(home, '.gemini', 'antigravity-cli');
+    await mkdir(nativeRoot, { recursive: true });
+    await writeFile(join(nativeRoot, 'antigravity-oauth-token'), 'x'.repeat(128));
+    const spawnProcess = vi.fn();
+    const manager = new AgyOAuthSessionManager({ home, spawnProcess, diagnosticStore: null });
+    managers.push(manager);
+
+    await expect(manager.start()).rejects.toThrow('already authenticated');
+    expect(spawnProcess).not.toHaveBeenCalled();
   });
 
   it('rejects arbitrary input and prevents concurrent OAuth processes', async () => {

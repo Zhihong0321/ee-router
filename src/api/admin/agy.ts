@@ -31,6 +31,7 @@ interface AgyProfileStatus {
   home: string;
   profile_root: string;
   ready: boolean;
+  format: 'native-v1' | 'legacy-json' | 'none';
   files: Record<string, ProfileFileStatus>;
 }
 
@@ -56,6 +57,7 @@ export interface AgyAdminDependencies {
 }
 
 const PROFILE_FILES = ['oauth_creds.json', 'google_accounts.json', 'settings.json'] as const;
+const NATIVE_TOKEN_FILE = 'antigravity-cli/antigravity-oauth-token';
 const MAX_PROMPT_CHARS = 20_000;
 
 function fallbackConfig(): ProviderConfig {
@@ -107,11 +109,15 @@ async function inspectProfile(home: string): Promise<AgyProfileStatus> {
     name,
     await fileStatus(join(profileRoot, name)),
   ] as const));
-  const files = Object.fromEntries(entries);
+  const files: Record<string, ProfileFileStatus> = Object.fromEntries(entries);
+  files[NATIVE_TOKEN_FILE] = await fileStatus(join(profileRoot, NATIVE_TOKEN_FILE));
+  const nativeReady = files[NATIVE_TOKEN_FILE]?.present === true;
+  const legacyReady = PROFILE_FILES.every(name => files[name]?.present === true);
   return {
     home,
     profile_root: profileRoot,
-    ready: PROFILE_FILES.every(name => files[name]?.present === true),
+    ready: nativeReady || legacyReady,
+    format: nativeReady ? 'native-v1' : legacyReady ? 'legacy-json' : 'none',
     files,
   };
 }
@@ -144,7 +150,7 @@ function validateProfileBundle(body: unknown): Record<(typeof PROFILE_FILES)[num
 
 async function importProfile(home: string, body: unknown): Promise<AgyProfileStatus> {
   const current = await inspectProfile(home);
-  if (current.files['oauth_creds.json']?.present) {
+  if (current.ready) {
     throw Object.assign(new Error('An AGY OAuth profile already exists; replacement is disabled'), { status: 409 });
   }
 
@@ -366,9 +372,9 @@ export async function registerAdminAgyRoutes(
     const key = getImportKey();
     const profile = await inspectProfile(home);
     return reply.send({
-      ready: Boolean(key && key.length >= 32 && !profile.files['oauth_creds.json']?.present),
+      ready: Boolean(key && key.length >= 32 && !profile.ready),
       import_key_configured: Boolean(key && key.length >= 32),
-      existing_profile: profile.files['oauth_creds.json']?.present === true,
+      existing_profile: profile.ready,
       transport: 'HTTPS JSON body; token contents are never logged or returned',
     });
   });

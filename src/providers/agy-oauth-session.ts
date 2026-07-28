@@ -119,6 +119,16 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
     if (this.current && ['starting', 'waiting', 'completing'].includes(this.current.state)) {
       throw new Error('An Antigravity OAuth session is already active');
     }
+    const nativeToken = join(this.home, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+    if (existsSync(nativeToken)) {
+      try {
+        if (statSync(nativeToken).size >= 100) {
+          throw new Error('Antigravity is already authenticated; replacement is disabled');
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('already authenticated')) throw error;
+      }
+    }
 
     await mkdir(this.scratchRoot, { recursive: true, mode: 0o700 });
     const scratch = await mkdtemp(join(this.scratchRoot, 'oauth-'));

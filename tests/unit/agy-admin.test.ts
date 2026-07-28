@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify from 'fastify';
@@ -201,6 +201,34 @@ describe('AGY admin operations API', () => {
       payload: bundle,
     });
     expect(secondImport.statusCode).toBe(409);
+  });
+
+  it('recognizes the native AGY 1.1.8 OAuth token and blocks legacy overwrite', async () => {
+    const home = await makeRoot('eter-agy-native-oauth-home-');
+    const nativeRoot = join(home, '.gemini', 'antigravity-cli');
+    await mkdir(nativeRoot, { recursive: true });
+    await writeFile(join(nativeRoot, 'antigravity-oauth-token'), 'native-token-metadata-placeholder', { mode: 0o600 });
+    const app = Fastify();
+    apps.push(app);
+    await registerAdminAgyRoutes(app, {
+      getAdapter: () => fakeAdapter('NATIVE_OAUTH_OK'),
+      diagnosticStore: null,
+      home,
+      importKey: () => 'n'.repeat(32),
+    });
+
+    const status = await app.inject({ method: 'GET', url: '/api/admin/agy/oauth/status' });
+    expect(status.statusCode).toBe(200);
+    expect(status.json()).toMatchObject({
+      ready: true,
+      format: 'native-v1',
+      files: {
+        'antigravity-cli/antigravity-oauth-token': { present: true },
+      },
+    });
+
+    const preflight = await app.inject({ method: 'GET', url: '/api/admin/agy/oauth/import' });
+    expect(preflight.json()).toMatchObject({ ready: false, existing_profile: true });
   });
 
   it('verifies the imported profile with agy models and a controlled marker prompt', async () => {
