@@ -1,16 +1,16 @@
-import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process';
+import { spawn, type ChildProcessByStdio, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Readable } from 'node:stream';
 import { AgyDiagnosticStore, getDefaultAgyDiagnosticStore } from './agy-diagnostics.js';
 
 const AUTH_URL_RE = /https:\/\/accounts\.google\.com\/[^\s]+/;
 const MAX_CAPTURE_BYTES = 128 * 1024;
 const START_TIMEOUT_MS = 10_000;
 const SESSION_TIMEOUT_MS = 5 * 60_000;
-const CODE_RE = /^[A-Za-z0-9._~+/=-]{8,4096}$/;
 
 export type AgyOAuthSessionState =
   | 'starting'
@@ -43,8 +43,8 @@ export interface AgyOAuthController {
 type SpawnOAuth = (
   command: string,
   args: readonly string[],
-  options: SpawnOptions & { stdio: ['pipe', 'pipe', 'pipe'] },
-) => ChildProcessWithoutNullStreams;
+  options: SpawnOptions & { stdio: ['ignore', 'pipe', 'pipe'] },
+) => ChildProcessByStdio<null, Readable, Readable>;
 
 export interface AgyOAuthSessionManagerOptions {
   binary?: string;
@@ -63,7 +63,7 @@ interface ActiveSession {
   expiresAt: number;
   finishedAt?: number;
   message: string;
-  child: ChildProcessWithoutNullStreams;
+  child: ChildProcessByStdio<null, Readable, Readable>;
   args: string[];
   scratch: string;
   stdout: Buffer[];
@@ -74,7 +74,6 @@ interface ActiveSession {
   signal: NodeJS.Signals | null;
   timer: NodeJS.Timeout;
   credentialTimer: NodeJS.Timeout;
-  suppressOutput: boolean;
 }
 
 function minimalEnvironment(source: NodeJS.ProcessEnv, home: string): NodeJS.ProcessEnv {
@@ -146,7 +145,7 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
       env: minimalEnvironment(this.environment, this.home),
       shell: false,
       windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     const session: ActiveSession = {
       id,
@@ -172,7 +171,6 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
         }
       }, SESSION_TIMEOUT_MS),
       credentialTimer: setInterval(() => undefined, SESSION_TIMEOUT_MS),
-      suppressOutput: false,
     };
     clearInterval(session.credentialTimer);
     session.credentialTimer = setInterval(() => {
@@ -200,13 +198,13 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
       const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       const byteKey = target === 'stdout' ? 'stdoutBytes' : 'stderrBytes';
       session[byteKey] += data.length;
-      if (!session.suppressOutput && session[byteKey] <= MAX_CAPTURE_BYTES) session[target].push(data);
+      if (session[byteKey] <= MAX_CAPTURE_BYTES) session[target].push(data);
       const combined = Buffer.concat([...session.stdout, ...session.stderr]).toString('utf8');
       const match = combined.match(AUTH_URL_RE);
       if (match && !session.authUrl) {
         session.authUrl = match[0];
         session.state = 'waiting';
-        session.message = 'Open the Google consent URL; submit a displayed code only if requested';
+        session.message = 'Open the Google consent URL and complete browser approval';
       }
     };
 
@@ -256,16 +254,9 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
     return this.snapshot(this.current);
   }
 
-  submitCode(sessionId: string, code: string): AgyOAuthSessionSnapshot {
-    const session = this.requireActive(sessionId);
-    const normalized = code.trim();
-    if (!CODE_RE.test(normalized)) throw new Error('Invalid OAuth authorization code format');
-    if (!session.child.stdin.writable) throw new Error('Antigravity OAuth input is no longer available');
-    session.suppressOutput = true;
-    session.child.stdin.write(normalized + '\n');
-    session.state = 'completing';
-    session.message = 'Authorization code submitted; waiting for Antigravity verification';
-    return this.snapshot(session);
+  submitCode(sessionId: string, _code: string): AgyOAuthSessionSnapshot {
+    this.requireActive(sessionId);
+    throw new Error('Authorization codes are disabled; complete approval in the browser callback');
   }
 
   cancel(sessionId: string): AgyOAuthSessionSnapshot {
@@ -297,7 +288,7 @@ export class AgyOAuthSessionManager implements AgyOAuthController {
       expires_at: new Date(session.expiresAt).toISOString(),
       ...(session.finishedAt ? { finished_at: new Date(session.finishedAt).toISOString() } : {}),
       message: session.message,
-      code_required: session.state === 'waiting',
+      code_required: false,
       secret_values_returned: false,
     };
   }

@@ -2,18 +2,18 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { PassThrough, type Readable } from 'node:stream';
+import type { ChildProcessByStdio } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgyOAuthSessionManager } from '../../src/providers/agy-oauth-session.js';
 
 const managers: AgyOAuthSessionManager[] = [];
 const temporaryRoots: string[] = [];
 
-function fakeChild(): ChildProcessWithoutNullStreams {
-  const child = new EventEmitter() as unknown as ChildProcessWithoutNullStreams;
+function fakeChild(): ChildProcessByStdio<null, Readable, Readable> {
+  const child = new EventEmitter() as unknown as ChildProcessByStdio<null, Readable, Readable>;
   Object.assign(child, {
-    stdin: new PassThrough(),
+    stdin: null,
     stdout: new PassThrough(),
     stderr: new PassThrough(),
     kill: vi.fn(() => true),
@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 
 describe('AgyOAuthSessionManager', () => {
-  it('exposes only the consent URL and accepts a bounded code through stdin', async () => {
+  it('exposes only the consent URL with stdin closed for browser callback', async () => {
     const home = await mkdtemp(join(tmpdir(), 'eter-agy-oauth-manager-'));
     temporaryRoots.push(home);
     const child = fakeChild();
@@ -58,24 +58,19 @@ describe('AgyOAuthSessionManager', () => {
     const started = await manager.start();
     expect(started).toMatchObject({
       state: 'waiting',
-      code_required: true,
+      code_required: false,
       secret_values_returned: false,
     });
     expect(started.auth_url).toContain('https://accounts.google.com/');
     expect(spawnProcess).toHaveBeenCalledWith(
       '/usr/local/bin/agy',
       expect.arrayContaining(['-p', '--model', 'gemini-3.6-flash-low']),
-      expect.objectContaining({ shell: false, stdio: ['pipe', 'pipe', 'pipe'] }),
+      expect.objectContaining({ shell: false, stdio: ['ignore', 'pipe', 'pipe'] }),
     );
 
-    let stdin = '';
-    child.stdin.on('data', chunk => {
-      stdin += chunk.toString();
-    });
-    const submitted = manager.submitCode(started.session_id, '4/0-safe-test-code');
-    expect(submitted.state).toBe('completing');
-    expect(JSON.stringify(submitted)).not.toContain('4/0-safe-test-code');
-    expect(stdin).toBe('4/0-safe-test-code\n');
+    expect(() => manager.submitCode(started.session_id, '4/0-safe-test-code')).toThrow(
+      'Authorization codes are disabled',
+    );
 
     child.emit('close', 0, null);
     expect(manager.status(started.session_id)).toMatchObject({
@@ -103,7 +98,7 @@ describe('AgyOAuthSessionManager', () => {
 
     const started = await manager.start();
     expect(() => manager.submitCode(started.session_id, 'bad code; rm -rf /')).toThrow(
-      'Invalid OAuth authorization code format',
+      'Authorization codes are disabled',
     );
     await expect(manager.start()).rejects.toThrow('already active');
   });
