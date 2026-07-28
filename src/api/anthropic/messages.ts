@@ -108,8 +108,8 @@ export async function registerAnthropicRoutes(app: FastifyInstance): Promise<voi
         errorMessage: lastResult.errorMessage,
         isStreaming: stream,
         usage: lastResult.usage,
-        inputCostPer1mTokens: currentAdapter.config.input_cost_per_1m_tokens,
-        outputCostPer1mTokens: currentAdapter.config.output_cost_per_1m_tokens,
+        inputCostPer1mTokens: currentAdapter.config.model_costs?.[model]?.input_cost_per_1m_tokens,
+        outputCostPer1mTokens: currentAdapter.config.model_costs?.[model]?.output_cost_per_1m_tokens,
       });
 
       latencyTracker.record(

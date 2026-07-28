@@ -184,15 +184,6 @@ const adminHtml = String.raw`<!doctype html>
             <input id="expires" name="api_key_expires_at" type="datetime-local" />
             <p class="hint">Expired provider keys are kept for audit but skipped by the router.</p>
           </div>
-          <div class="field">
-            <label for="input-cost">Input token cost <span style="color:var(--muted);font-weight:500">(USD / 1M tokens)</span></label>
-            <input id="input-cost" name="input_cost_per_1m_tokens" type="number" min="0" step="0.000001" value="0" placeholder="0" />
-          </div>
-          <div class="field">
-            <label for="output-cost">Output token cost <span style="color:var(--muted);font-weight:500">(USD / 1M tokens)</span></label>
-            <input id="output-cost" name="output_cost_per_1m_tokens" type="number" min="0" step="0.000001" value="0" placeholder="0" />
-            <p class="hint">The saved rates are used to calculate cost on every request log.</p>
-          </div>
           <div class="button-row">
             <button id="submit-btn" class="btn btn-primary" type="submit">Add provider</button>
             <button id="clear-btn" class="btn btn-subtle" type="button">Clear</button>
@@ -314,14 +305,16 @@ const adminHtml = String.raw`<!doctype html>
           return '<article class="provider-card">' +
             '<div class="provider-card-top"><div><div class="provider-name">' + escapeHtml(provider.name) + '</div>' +
             '<div class="provider-meta"><span class="badge accent">' + escapeHtml(labels[provider.provider_type] || provider.provider_type) + '</span>' + expiryBadge(provider.api_key_expires_at) + '</div></div>' +
-            '<div class="card-actions"><button class="btn btn-subtle edit-btn" data-id="' + escapeHtml(provider.id) + '" type="button">Edit</button><button class="btn btn-danger delete-btn" data-id="' + escapeHtml(provider.id) + '" type="button">Delete</button></div></div>' +
+            '<div class="card-actions"><button class="btn btn-subtle costs-btn" data-id="' + escapeHtml(provider.id) + '" type="button">Set model costs</button><button class="btn btn-subtle edit-btn" data-id="' + escapeHtml(provider.id) + '" type="button">Edit</button><button class="btn btn-danger delete-btn" data-id="' + escapeHtml(provider.id) + '" type="button">Delete</button></div></div>' +
             '<div class="provider-url">' + escapeHtml(provider.base_url) + '</div>' +
-            '<div class="provider-meta"><span class="badge">$' + escapeHtml(Number(provider.input_cost_per_1m_tokens ?? 0).toFixed(4)) + ' in</span><span class="badge">$' + escapeHtml(Number(provider.output_cost_per_1m_tokens ?? 0).toFixed(4)) + ' out <span class="hint">/ 1M tokens</span></span></div>' +
             '<div class="model-list">' + modelHtml + '</div>' +
             '<div class="card-footer"><span class="key-mask">' + escapeHtml(provider.key_prefix || '••••••••') + '</span><span class="hint">Added ' + escapeHtml(new Date(provider.created_at).toLocaleDateString()) + '</span></div>' +
             '</article>';
         }).join('') + '</div>';
         list.querySelectorAll('.edit-btn').forEach(button => button.addEventListener('click', () => editProvider(button.dataset.id)));
+        list.querySelectorAll('.costs-btn').forEach(button => button.addEventListener('click', () => {
+          window.location.href = '/providers/' + encodeURIComponent(button.dataset.id) + '/costs';
+        }));
         list.querySelectorAll('.delete-btn').forEach(button => button.addEventListener('click', () => deleteProvider(button.dataset.id)));
       }
 
@@ -368,8 +361,6 @@ const adminHtml = String.raw`<!doctype html>
         el('api-key').required = false;
         el('api-key').placeholder = 'Leave blank to keep the saved key';
         el('models').value = Array.isArray(provider.models) ? provider.models.join('\n') : '';
-        el('input-cost').value = String(provider.input_cost_per_1m_tokens ?? 0);
-        el('output-cost').value = String(provider.output_cost_per_1m_tokens ?? 0);
         if (provider.api_key_expires_at) {
           const date = new Date(provider.api_key_expires_at);
           const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -459,9 +450,7 @@ const adminHtml = String.raw`<!doctype html>
           provider_type: el('provider-type').value,
           base_url: el('base-url').value.trim(),
           models,
-          api_key_expires_at: expiry ? new Date(expiry).toISOString() : null,
-          input_cost_per_1m_tokens: Number(el('input-cost').value || 0),
-          output_cost_per_1m_tokens: Number(el('output-cost').value || 0)
+          api_key_expires_at: expiry ? new Date(expiry).toISOString() : null
         };
         if (apiKey) payload.api_key = apiKey;
         button.disabled = true;

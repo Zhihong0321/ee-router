@@ -26,7 +26,7 @@ export async function registerAdminLogRoutes(app: FastifyInstance): Promise<void
       const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
       const rows = await query<Record<string, unknown>>(
-        `SELECT id, api_key_id, api_key_prefix, provider_id, provider_name, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, latency_ms, ttfb_ms, is_streaming, status, error_message, created_at
+        `SELECT id, api_key_id, api_key_prefix, provider_id, provider_name, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, input_cost_per_1m_tokens, output_cost_per_1m_tokens, latency_ms, ttfb_ms, is_streaming, status, error_message, created_at
          FROM request_logs ${where}
          ORDER BY created_at DESC
          LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,

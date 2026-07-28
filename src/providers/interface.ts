@@ -32,6 +32,11 @@ export interface TokenUsage {
   total_tokens: number;
 }
 
+export interface ModelCost {
+  input_cost_per_1m_tokens: number;
+  output_cost_per_1m_tokens: number;
+}
+
 export interface NormalizedResponse {
   id: string;
   model: string;
@@ -70,10 +75,8 @@ export interface ProviderConfig {
   is_active?: boolean;
   api_key_expires_at?: string | null;
   extra_headers?: Record<string, string>;
-  /** USD charged per 1 million input/prompt tokens. */
-  input_cost_per_1m_tokens?: number;
-  /** USD charged per 1 million output/completion tokens. */
-  output_cost_per_1m_tokens?: number;
+  /** USD pricing by the provider's configured model ID. */
+  model_costs?: Record<string, ModelCost>;
 }
 
 export interface ProviderAdapter {

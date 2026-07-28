@@ -63,16 +63,91 @@ function errorStatus(message: string): 400 | 500 {
   return message.includes('required') || message.includes('invalid') || message.includes('must ') ? 400 : 500;
 }
 
+async function loadModelCosts(providerId: string): Promise<Record<string, {
+  input_cost_per_1m_tokens: number;
+  output_cost_per_1m_tokens: number;
+}>> {
+  const rows = await query<{
+    model: string;
+    input_cost_per_1m_tokens: number | string;
+    output_cost_per_1m_tokens: number | string;
+  }>(
+    'SELECT model, input_cost_per_1m_tokens, output_cost_per_1m_tokens FROM provider_model_costs WHERE provider_id = $1',
+    [providerId],
+  );
+  return Object.fromEntries(rows.map(row => [row.model, {
+    input_cost_per_1m_tokens: Number(row.input_cost_per_1m_tokens),
+    output_cost_per_1m_tokens: Number(row.output_cost_per_1m_tokens),
+  }]));
+}
+
 export async function registerAdminProviderRoutes(app: FastifyInstance): Promise<void> {
   // GET /api/admin/providers
   app.get('/api/admin/providers', async (_request, reply) => {
     try {
       const rows = await query<Record<string, unknown>>(
-        'SELECT id, name, provider_type, base_url, models, is_active, api_key_expires_at, timeout_ms, max_retries, extra_headers, key_prefix, input_cost_per_1m_tokens, output_cost_per_1m_tokens, created_at FROM providers ORDER BY created_at DESC'
+        'SELECT id, name, provider_type, base_url, models, is_active, api_key_expires_at, timeout_ms, max_retries, extra_headers, key_prefix, created_at FROM providers ORDER BY created_at DESC'
       );
       return reply.send(rows);
     } catch (error) {
       return reply.status(500).send({ error: String(error) });
+    }
+  });
+
+  // GET /api/admin/providers/:id/model-costs — configured model IDs with their individual rates.
+  app.get('/api/admin/providers/:id/model-costs', async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      const rows = await query<{ id: string; name: string; models: string[] }>(
+        'SELECT id, name, models FROM providers WHERE id = $1',
+        [id],
+      );
+      const provider = rows[0];
+      if (!provider) return reply.status(404).send({ error: 'provider not found' });
+      return reply.send({ ...provider, model_costs: await loadModelCosts(id) });
+    } catch (error) {
+      return reply.status(500).send({ error: String(error) });
+    }
+  });
+
+  // PUT /api/admin/providers/:id/model-costs — persist one input/output price pair per available model.
+  app.put('/api/admin/providers/:id/model-costs', async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      const body = request.body as { model_costs?: unknown };
+      if (!Array.isArray(body.model_costs)) {
+        return reply.status(400).send({ error: 'model_costs must be an array' });
+      }
+      const providers = await query<{ models: string[] }>('SELECT models FROM providers WHERE id = $1', [id]);
+      const provider = providers[0];
+      if (!provider) return reply.status(404).send({ error: 'provider not found' });
+      const availableModels = new Set(provider.models ?? []);
+
+      for (const value of body.model_costs) {
+        const row = value as Record<string, unknown>;
+        const model = String(row.model ?? '').trim();
+        if (!model || !availableModels.has(model)) {
+          return reply.status(400).send({ error: 'each model_cost must reference an available provider model' });
+        }
+        const inputCost = validateCost(row.input_cost_per_1m_tokens, 'input_cost_per_1m_tokens');
+        const outputCost = validateCost(row.output_cost_per_1m_tokens, 'output_cost_per_1m_tokens');
+        await query(
+          `INSERT INTO provider_model_costs (provider_id, model, input_cost_per_1m_tokens, output_cost_per_1m_tokens, updated_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (provider_id, model) DO UPDATE SET
+             input_cost_per_1m_tokens = EXCLUDED.input_cost_per_1m_tokens,
+             output_cost_per_1m_tokens = EXCLUDED.output_cost_per_1m_tokens,
+             updated_at = NOW()`,
+          [id, model, inputCost, outputCost],
+        );
+      }
+
+      const modelCosts = await loadModelCosts(id);
+      providerRegistry.setModelCosts(id, modelCosts);
+      return reply.send({ id, model_costs: modelCosts });
+    } catch (error) {
+      const message = String(error).replace(/^Error: /, '');
+      return reply.status(errorStatus(message)).send({ error: message });
     }
   });
 
@@ -140,8 +215,6 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         timeout_ms?: number;
         max_retries?: number;
         extra_headers?: Record<string, string>;
-        input_cost_per_1m_tokens?: number | null;
-        output_cost_per_1m_tokens?: number | null;
       };
 
       const providerType = validateProviderType(body.provider_type);
@@ -152,16 +225,14 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
       const baseUrl = validateBaseUrl(body.base_url, providerType);
       const models = parseModels(body.models);
       const expiresAt = validateExpiry(body.api_key_expires_at);
-      const inputCost = validateCost(body.input_cost_per_1m_tokens, 'input_cost_per_1m_tokens');
-      const outputCost = validateCost(body.output_cost_per_1m_tokens, 'output_cost_per_1m_tokens');
       const apiKey = body.api_key?.trim() || 'local-agy';
       const credential = encryptProviderKey(apiKey);
       const timeoutMs = body.timeout_ms ?? 60_000;
       const maxRetries = body.max_retries ?? 2;
 
       const rows = await query<{ id: string }>(
-        `INSERT INTO providers (name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, timeout_ms, max_retries, extra_headers, key_prefix, input_cost_per_1m_tokens, output_cost_per_1m_tokens)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        `INSERT INTO providers (name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, timeout_ms, max_retries, extra_headers, key_prefix)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING id`,
         [
           body.name,
@@ -175,8 +246,6 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
           maxRetries,
           JSON.stringify(body.extra_headers ?? {}),
           isLocalCliProvider(providerType) ? 'local' : `key-${apiKey.slice(0, 4)}…`,
-          inputCost,
-          outputCost,
         ]
       );
 
@@ -191,8 +260,6 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         timeout_ms: timeoutMs,
         max_retries: maxRetries,
         extra_headers: body.extra_headers,
-        input_cost_per_1m_tokens: inputCost,
-        output_cost_per_1m_tokens: outputCost,
       });
 
       return reply.status(201).send({ id: rows[0]!.id, models });
@@ -216,8 +283,6 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         timeout_ms?: number;
         max_retries?: number;
         extra_headers?: Record<string, string>;
-        input_cost_per_1m_tokens?: number | null;
-        output_cost_per_1m_tokens?: number | null;
       };
 
       const rows = await query<{
@@ -234,10 +299,8 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         max_retries: number;
         extra_headers: Record<string, string>;
         key_prefix: string | null;
-        input_cost_per_1m_tokens: number;
-        output_cost_per_1m_tokens: number;
       }>(
-        'SELECT id, name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, is_active, timeout_ms, max_retries, extra_headers, key_prefix, input_cost_per_1m_tokens, output_cost_per_1m_tokens FROM providers WHERE id = $1',
+        'SELECT id, name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, is_active, timeout_ms, max_retries, extra_headers, key_prefix FROM providers WHERE id = $1',
         [id],
       );
       const existing = rows[0];
@@ -252,8 +315,6 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
       const expiresAt = body.api_key_expires_at === undefined
         ? validateExpiry(existing.api_key_expires_at)
         : validateExpiry(body.api_key_expires_at);
-      const inputCost = validateCost(body.input_cost_per_1m_tokens, 'input_cost_per_1m_tokens', Number(existing.input_cost_per_1m_tokens ?? 0));
-      const outputCost = validateCost(body.output_cost_per_1m_tokens, 'output_cost_per_1m_tokens', Number(existing.output_cost_per_1m_tokens ?? 0));
       const newApiKey = body.api_key?.trim() || '';
       const apiKey = newApiKey || decryptProviderKey(existing.api_key_enc, existing.api_key_iv);
       const credential = newApiKey ? encryptProviderKey(newApiKey) : {
@@ -269,10 +330,9 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         `UPDATE providers
          SET name = $1, provider_type = $2, base_url = $3, api_key_enc = $4, api_key_iv = $5,
              models = $6, api_key_expires_at = $7, timeout_ms = $8, max_retries = $9,
-             extra_headers = $10, key_prefix = $11, input_cost_per_1m_tokens = $12,
-             output_cost_per_1m_tokens = $13, updated_at = NOW()
-         WHERE id = $14`,
-        [name, providerType, baseUrl, credential.encrypted, credential.iv, models, expiresAt, timeoutMs, maxRetries, JSON.stringify(extraHeaders), keyPrefix, inputCost, outputCost, id],
+             extra_headers = $10, key_prefix = $11, updated_at = NOW()
+         WHERE id = $12`,
+        [name, providerType, baseUrl, credential.encrypted, credential.iv, models, expiresAt, timeoutMs, maxRetries, JSON.stringify(extraHeaders), keyPrefix, id],
       );
 
       providerRegistry.register({
@@ -287,9 +347,8 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         timeout_ms: timeoutMs,
         max_retries: maxRetries,
         extra_headers: extraHeaders,
-        input_cost_per_1m_tokens: inputCost,
-        output_cost_per_1m_tokens: outputCost,
       });
+      providerRegistry.setModelCosts(id, await loadModelCosts(id));
 
       return reply.send({ id, models });
     } catch (error) {

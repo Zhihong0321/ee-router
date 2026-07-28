@@ -189,7 +189,10 @@ const logsHtml = String.raw`<!doctype html>
           const usage = log.total_tokens == null
             ? '<span class="muted">—</span>'
             : escapeHtml(String(log.prompt_tokens ?? 0) + ' in · ' + String(log.completion_tokens ?? 0) + ' out · ' + String(log.total_tokens ?? 0) + ' total');
-          const cost = log.cost_usd == null ? '<span class="muted">—</span>' : '$' + escapeHtml(Number(log.cost_usd).toFixed(6));
+          const rate = log.input_cost_per_1m_tokens == null
+            ? ''
+            : '<div class="muted">$' + escapeHtml(Number(log.input_cost_per_1m_tokens).toFixed(4)) + ' in · $' + escapeHtml(Number(log.output_cost_per_1m_tokens ?? 0).toFixed(4)) + ' out / 1M</div>';
+          const cost = log.cost_usd == null ? '<span class="muted">—</span>' : '$' + escapeHtml(Number(log.cost_usd).toFixed(6)) + rate;
           return '<tr>' +
             '<td>' + escapeHtml(formatTime(log.created_at)) + '</td>' +
             '<td><span class="mono">' + escapeHtml(log.api_key_prefix) + '</span></td>' +

@@ -21,6 +21,7 @@ import { registerLoginRoutes } from './web/login-ui.js';
 import { registerAdminUiRoutes } from './web/admin-ui.js';
 import { registerAdminKeyUiRoutes } from './web/api-keys-ui.js';
 import { registerAdminLogsUiRoutes } from './web/logs-ui.js';
+import { registerProviderModelCostsUiRoutes } from './web/provider-model-costs-ui.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -46,6 +47,29 @@ async function main(): Promise<void> {
       );
       if (rows.length > 0) {
         providerRegistry.loadFromDb(rows);
+        const pricingRows = await query<{
+          provider_id: string;
+          model: string;
+          input_cost_per_1m_tokens: number | string;
+          output_cost_per_1m_tokens: number | string;
+        }>(
+          'SELECT provider_id, model, input_cost_per_1m_tokens, output_cost_per_1m_tokens FROM provider_model_costs',
+        );
+        const costsByProvider = new Map<string, Record<string, {
+          input_cost_per_1m_tokens: number;
+          output_cost_per_1m_tokens: number;
+        }>>();
+        for (const row of pricingRows) {
+          const costs = costsByProvider.get(row.provider_id) ?? {};
+          costs[row.model] = {
+            input_cost_per_1m_tokens: Number(row.input_cost_per_1m_tokens),
+            output_cost_per_1m_tokens: Number(row.output_cost_per_1m_tokens),
+          };
+          costsByProvider.set(row.provider_id, costs);
+        }
+        for (const [providerId, costs] of costsByProvider) {
+          providerRegistry.setModelCosts(providerId, costs);
+        }
         console.log(`[bootstrap] Loaded ${rows.length} provider(s) into registry.`);
       } else {
         console.log('[bootstrap] No active providers found in DB.');
@@ -143,6 +167,7 @@ async function main(): Promise<void> {
   await registerAdminUiRoutes(app);
   await registerAdminKeyUiRoutes(app);
   await registerAdminLogsUiRoutes(app);
+  await registerProviderModelCostsUiRoutes(app);
 
   // Start server
   try {

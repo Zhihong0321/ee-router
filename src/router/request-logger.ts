@@ -46,8 +46,9 @@ export async function writeRequestLog(input: RequestLogInput): Promise<void> {
       `INSERT INTO request_logs
        (api_key_id, api_key_prefix, provider_id, provider_name, model,
         prompt_tokens, completion_tokens, total_tokens, cost_usd,
+        input_cost_per_1m_tokens, output_cost_per_1m_tokens,
         latency_ms, ttfb_ms, is_streaming, status, error_message)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
       [
         input.apiKeyId,
         input.apiKeyPrefix,
@@ -58,6 +59,8 @@ export async function writeRequestLog(input: RequestLogInput): Promise<void> {
         usage?.completion_tokens ?? null,
         usage?.total_tokens ?? null,
         costUsd,
+        usage ? input.inputCostPer1mTokens ?? 0 : null,
+        usage ? input.outputCostPer1mTokens ?? 0 : null,
         Math.max(0, Math.round(input.latencyMs)),
         Math.max(0, Math.round(input.ttfbMs)),
         input.isStreaming,

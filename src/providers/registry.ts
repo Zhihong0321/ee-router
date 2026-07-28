@@ -1,4 +1,4 @@
-import { type ProviderAdapter, type ProviderConfig } from './interface.js';
+import { type ModelCost, type ProviderAdapter, type ProviderConfig } from './interface.js';
 import { OpenAIAdapter } from './openai-adapter.js';
 import { AnthropicAdapter } from './anthropic-adapter.js';
 import { CustomProviderAdapter } from './custom-adapter.js';
@@ -50,6 +50,11 @@ export class ProviderRegistry {
     return Array.from(this.adapters.values());
   }
 
+  setModelCosts(providerId: string, modelCosts: Record<string, ModelCost>): void {
+    const adapter = this.adapters.get(providerId);
+    if (adapter) adapter.config.model_costs = modelCosts;
+  }
+
   /** Load providers from DB rows */
   loadFromDb(rows: Array<Record<string, unknown>>): void {
     for (const row of rows) {
@@ -67,8 +72,6 @@ export class ProviderRegistry {
         timeout_ms: (row.timeout_ms as number) ?? 60_000,
         max_retries: (row.max_retries as number) ?? 2,
         extra_headers: row.extra_headers as Record<string, string> | undefined,
-        input_cost_per_1m_tokens: Number(row.input_cost_per_1m_tokens ?? 0),
-        output_cost_per_1m_tokens: Number(row.output_cost_per_1m_tokens ?? 0),
       });
     }
   }
