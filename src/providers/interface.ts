@@ -26,6 +26,12 @@ export interface NormalizedRequest {
   [key: string]: unknown;
 }
 
+export interface TokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
 export interface NormalizedResponse {
   id: string;
   model: string;
@@ -35,7 +41,7 @@ export interface NormalizedResponse {
     message: { role: string; content: string | null; tool_calls?: ToolCallDelta[] };
     finish_reason: string | null;
   }>;
-  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  usage?: TokenUsage;
 }
 
 export interface NormalizedChunk {
@@ -47,7 +53,7 @@ export interface NormalizedChunk {
     delta: { role?: string; content?: string; tool_calls?: ToolCallDelta[] };
     finish_reason: string | null;
   }>;
-  usage?: { prompt_tokens: number; completion_tokens: number };
+  usage?: Partial<TokenUsage>;
 }
 
 // ── Provider Adapter contract ───────────────────────────────
@@ -55,7 +61,7 @@ export interface NormalizedChunk {
 export interface ProviderConfig {
   id: string;
   name: string;
-  provider_type: 'openai-compatible' | 'anthropic' | 'gemini' | 'agy-cli' | 'custom';
+  provider_type: 'openai-compatible' | 'anthropic' | 'gemini' | 'agy-cli' | 'codex-cli' | 'custom';
   base_url: string;
   api_key: string;
   models: string[];
@@ -64,6 +70,10 @@ export interface ProviderConfig {
   is_active?: boolean;
   api_key_expires_at?: string | null;
   extra_headers?: Record<string, string>;
+  /** USD charged per 1 million input/prompt tokens. */
+  input_cost_per_1m_tokens?: number;
+  /** USD charged per 1 million output/completion tokens. */
+  output_cost_per_1m_tokens?: number;
 }
 
 export interface ProviderAdapter {

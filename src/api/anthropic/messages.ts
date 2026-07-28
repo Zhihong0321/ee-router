@@ -60,7 +60,7 @@ export async function registerAnthropicRoutes(app: FastifyInstance): Promise<voi
     }
 
     const failedIds = new Set<string>();
-    let lastResult: { ttfbMs: number; status: 'success' | 'error' | 'timeout'; errorMessage?: string } | null = null;
+    let lastResult: { ttfbMs: number; status: 'success' | 'error' | 'timeout'; errorMessage?: string; usage?: import('../../providers/interface.js').TokenUsage } | null = null;
     let currentAdapter: ProviderAdapter | null = adapter;
     let attempt = 0;
 
@@ -72,6 +72,7 @@ export async function registerAnthropicRoutes(app: FastifyInstance): Promise<voi
         max_tokens: body.max_tokens as number | undefined,
         stream,
         tools: body.tools as unknown[] | undefined,
+        ...(stream ? { stream_options: { include_usage: true } } : {}),
       });
       const callFormat: ApiFormat = 'anthropic';
 
@@ -106,6 +107,9 @@ export async function registerAnthropicRoutes(app: FastifyInstance): Promise<voi
         status: lastResult.status,
         errorMessage: lastResult.errorMessage,
         isStreaming: stream,
+        usage: lastResult.usage,
+        inputCostPer1mTokens: currentAdapter.config.input_cost_per_1m_tokens,
+        outputCostPer1mTokens: currentAdapter.config.output_cost_per_1m_tokens,
       });
 
       latencyTracker.record(

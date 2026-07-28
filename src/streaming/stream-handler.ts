@@ -1,4 +1,4 @@
-import { type NormalizedResponse, type ProviderAdapter } from '../providers/interface.js';
+import { type NormalizedResponse, type ProviderAdapter, type TokenUsage } from '../providers/interface.js';
 import { type FastifyReply } from 'fastify';
 
 export type ApiFormat = 'openai' | 'anthropic';
@@ -7,6 +7,7 @@ type ProxyResult = {
   ttfbMs: number;
   status: 'success' | 'error' | 'timeout';
   errorMessage?: string;
+  usage?: TokenUsage;
 };
 
 function normalizedResponsePayload(
@@ -137,7 +138,7 @@ async function handleLocalStreaming(
     }
 
     reply.raw.end();
-    return { ttfbMs, status: 'success' };
+    return { ttfbMs, status: 'success', usage: normalized.usage };
   } catch (error) {
     return localExecutionError(error, startedAt);
   }
@@ -156,6 +157,43 @@ function upstreamUrl(adapter: ProviderAdapter, model: string, stream: boolean): 
 
   const endpoint = adapter.config.provider_type === 'anthropic' ? '/messages' : '/chat/completions';
   return baseUrl + endpoint;
+}
+
+function mergeTokenUsage(current: TokenUsage | undefined, next: Partial<TokenUsage> | undefined): TokenUsage | undefined {
+  if (!next) return current;
+  const promptTokens = Math.max(current?.prompt_tokens ?? 0, Number(next.prompt_tokens ?? 0));
+  const completionTokens = Math.max(current?.completion_tokens ?? 0, Number(next.completion_tokens ?? 0));
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: Math.max(Number(next.total_tokens ?? 0), promptTokens + completionTokens),
+  };
+}
+
+function usageFromStreamLine(line: string): Partial<TokenUsage> | undefined {
+  if (!line.startsWith('data: ') || line === 'data: [DONE]') return undefined;
+  try {
+    const data = JSON.parse(line.slice(6)) as Record<string, unknown>;
+    const usage = (data.usage ?? (data.message as Record<string, unknown> | undefined)?.usage) as Record<string, unknown> | undefined;
+    const metadata = data.usageMetadata as Record<string, unknown> | undefined;
+    if (metadata) {
+      return {
+        prompt_tokens: Number(metadata.promptTokenCount ?? 0),
+        completion_tokens: Number(metadata.candidatesTokenCount ?? 0),
+        total_tokens: Number(metadata.totalTokenCount ?? 0),
+      };
+    }
+    if (!usage) return undefined;
+    const promptTokens = Number(usage.prompt_tokens ?? usage.input_tokens ?? 0);
+    const completionTokens = Number(usage.completion_tokens ?? usage.output_tokens ?? 0);
+    return {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: Number(usage.total_tokens ?? (promptTokens + completionTokens)),
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function geminiResponse(raw: unknown, adapter: ProviderAdapter, model: string, format: ApiFormat): Record<string, unknown> {
@@ -204,7 +242,7 @@ export async function handleStreamingProxy(
   callFormat: ApiFormat,
   reply: FastifyReply,
   model?: string,
-): Promise<{ ttfbMs: number; status: 'success' | 'error' | 'timeout'; errorMessage?: string }> {
+): Promise<ProxyResult> {
   const requestedModel = model ?? adapter.config.models[0] ?? '';
   const start = Date.now();
 
@@ -235,10 +273,11 @@ export async function handleStreamingProxy(
 
     if (!response.body) {
       const data = await response.json() as Record<string, unknown>;
+      const normalized = adapter.translateResponse(data);
       await reply.headers({ 'Content-Type': 'application/json' }).send(
         adapter.config.provider_type === 'gemini' ? geminiResponse(data, adapter, requestedModel, callFormat) : data,
       );
-      return { ttfbMs, status: 'success' };
+      return { ttfbMs, status: 'success', usage: normalized.usage };
     }
 
     reply.raw.writeHead(200, {
@@ -251,6 +290,7 @@ export async function handleStreamingProxy(
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let usage: TokenUsage | undefined;
 
     try {
       while (true) {
@@ -262,6 +302,7 @@ export async function handleStreamingProxy(
         buffer = lines.pop() ?? '';
 
         for (const line of lines) {
+          usage = mergeTokenUsage(usage, usageFromStreamLine(line));
           if (adapter.config.provider_type === 'gemini') {
             const translated = translateGeminiStreamLine(line, callFormat, requestedModel, adapter);
             if (translated) reply.raw.write(translated);
@@ -278,12 +319,13 @@ export async function handleStreamingProxy(
       }
     } catch (streamError) {
       reply.raw.write(callFormat === 'openai' ? 'data: [DONE]\n\n' : 'event: error\ndata: {}\n\n');
-      return { ttfbMs, status: 'error', errorMessage: String(streamError) };
+      return { ttfbMs, status: 'error', errorMessage: String(streamError), usage };
     }
 
+    usage = mergeTokenUsage(usage, usageFromStreamLine(buffer));
     if (callFormat === 'openai') reply.raw.write('data: [DONE]\n\n');
     reply.raw.end();
-    return { ttfbMs, status: 'success' };
+    return { ttfbMs, status: 'success', usage };
   } catch (error) {
     const elapsed = Date.now() - start;
     const isTimeout = error instanceof DOMException && error.name === 'AbortError';
@@ -302,7 +344,7 @@ export async function handleNonStreamingProxy(
   callFormat: ApiFormat,
   reply: FastifyReply,
   model?: string,
-): Promise<{ ttfbMs: number; status: 'success' | 'error' | 'timeout'; errorMessage?: string }> {
+): Promise<ProxyResult> {
   const requestedModel = model ?? adapter.config.models[0] ?? '';
   const start = Date.now();
 
@@ -311,7 +353,7 @@ export async function handleNonStreamingProxy(
       const normalized = await adapter.execute(requestBody);
       const ttfbMs = Date.now() - start;
       await reply.send(normalizedResponsePayload(normalized, requestedModel, callFormat));
-      return { ttfbMs, status: 'success' };
+      return { ttfbMs, status: 'success', usage: normalized.usage };
     } catch (error) {
       return localExecutionError(error, start);
     }
@@ -339,10 +381,11 @@ export async function handleNonStreamingProxy(
     }
 
     const data = await response.json() as Record<string, unknown>;
+    const normalized = adapter.translateResponse(data);
     await reply.send(
       adapter.config.provider_type === 'gemini' ? geminiResponse(data, adapter, requestedModel, callFormat) : data,
     );
-    return { ttfbMs, status: 'success' };
+    return { ttfbMs, status: 'success', usage: normalized.usage };
   } catch (error) {
     const elapsed = Date.now() - start;
     const isTimeout = error instanceof DOMException && error.name === 'AbortError';

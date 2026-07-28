@@ -77,7 +77,10 @@ export class AnthropicAdapter implements ProviderAdapter {
             delta: { role: 'assistant', content: '' },
             finish_reason: null,
           }],
-          usage: msg.usage as { prompt_tokens: number; completion_tokens: number } | undefined,
+          usage: msg.usage ? {
+            prompt_tokens: Number((msg.usage as Record<string, unknown>).prompt_tokens ?? (msg.usage as Record<string, unknown>).input_tokens ?? 0),
+            completion_tokens: Number((msg.usage as Record<string, unknown>).completion_tokens ?? (msg.usage as Record<string, unknown>).output_tokens ?? 0),
+          } : undefined,
         };
       }
       case 'content_block_delta': {
@@ -136,7 +139,13 @@ export class AnthropicAdapter implements ProviderAdapter {
         message: { role: 'assistant', content: textBlocks || '' },
         finish_reason: (data.stop_reason as string) === 'end_turn' ? 'stop' : (data.stop_reason as string ?? null),
       }],
-      usage: data.usage as { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined,
+      usage: data.usage ? {
+        prompt_tokens: Number((data.usage as Record<string, unknown>).prompt_tokens ?? (data.usage as Record<string, unknown>).input_tokens ?? 0),
+        completion_tokens: Number((data.usage as Record<string, unknown>).completion_tokens ?? (data.usage as Record<string, unknown>).output_tokens ?? 0),
+        total_tokens: Number((data.usage as Record<string, unknown>).total_tokens ?? 0) ||
+          Number((data.usage as Record<string, unknown>).prompt_tokens ?? (data.usage as Record<string, unknown>).input_tokens ?? 0) +
+          Number((data.usage as Record<string, unknown>).completion_tokens ?? (data.usage as Record<string, unknown>).output_tokens ?? 0),
+      } : undefined,
     };
   }
 

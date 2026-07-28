@@ -158,6 +158,7 @@ const adminHtml = String.raw`<!doctype html>
               <option value="anthropic">Anthropic</option>
               <option value="gemini">Google Gemini</option>
               <option value="agy-cli">Antigravity CLI (agy)</option>
+              <option value="codex-cli">Codex CLI (codex)</option>
               <option value="custom">Custom OpenAI-compatible</option>
             </select>
           </div>
@@ -182,6 +183,15 @@ const adminHtml = String.raw`<!doctype html>
             <label for="expires">API key deadline <span style="color:var(--muted);font-weight:500">(optional)</span></label>
             <input id="expires" name="api_key_expires_at" type="datetime-local" />
             <p class="hint">Expired provider keys are kept for audit but skipped by the router.</p>
+          </div>
+          <div class="field">
+            <label for="input-cost">Input token cost <span style="color:var(--muted);font-weight:500">(USD / 1M tokens)</span></label>
+            <input id="input-cost" name="input_cost_per_1m_tokens" type="number" min="0" step="0.000001" value="0" placeholder="0" />
+          </div>
+          <div class="field">
+            <label for="output-cost">Output token cost <span style="color:var(--muted);font-weight:500">(USD / 1M tokens)</span></label>
+            <input id="output-cost" name="output_cost_per_1m_tokens" type="number" min="0" step="0.000001" value="0" placeholder="0" />
+            <p class="hint">The saved rates are used to calculate cost on every request log.</p>
           </div>
           <div class="button-row">
             <button id="submit-btn" class="btn btn-primary" type="submit">Add provider</button>
@@ -222,6 +232,7 @@ const adminHtml = String.raw`<!doctype html>
         anthropic: 'https://api.anthropic.com/v1',
         gemini: 'https://generativelanguage.googleapis.com/v1beta',
         'agy-cli': 'local://agy',
+        'codex-cli': 'local://codex',
         custom: ''
       };
       const labels = {
@@ -229,8 +240,12 @@ const adminHtml = String.raw`<!doctype html>
         anthropic: 'Anthropic',
         gemini: 'Google Gemini',
         'agy-cli': 'Antigravity CLI (agy)',
+        'codex-cli': 'Codex CLI (codex)',
         custom: 'Custom endpoint'
       };
+      // Local CLI providers run inside EE Router, so they take no base URL or API key.
+      const isLocalCli = type => type === 'agy-cli' || type === 'codex-cli';
+      const localCliName = type => type === 'codex-cli' ? 'Codex' : 'AGY';
       const el = id => document.getElementById(id);
       const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
       const apiError = payload => payload && payload.error ? (typeof payload.error === 'string' ? payload.error : payload.error.message || JSON.stringify(payload.error)) : 'Request failed';
@@ -301,6 +316,7 @@ const adminHtml = String.raw`<!doctype html>
             '<div class="provider-meta"><span class="badge accent">' + escapeHtml(labels[provider.provider_type] || provider.provider_type) + '</span>' + expiryBadge(provider.api_key_expires_at) + '</div></div>' +
             '<div class="card-actions"><button class="btn btn-subtle edit-btn" data-id="' + escapeHtml(provider.id) + '" type="button">Edit</button><button class="btn btn-danger delete-btn" data-id="' + escapeHtml(provider.id) + '" type="button">Delete</button></div></div>' +
             '<div class="provider-url">' + escapeHtml(provider.base_url) + '</div>' +
+            '<div class="provider-meta"><span class="badge">$' + escapeHtml(Number(provider.input_cost_per_1m_tokens ?? 0).toFixed(4)) + ' in</span><span class="badge">$' + escapeHtml(Number(provider.output_cost_per_1m_tokens ?? 0).toFixed(4)) + ' out <span class="hint">/ 1M tokens</span></span></div>' +
             '<div class="model-list">' + modelHtml + '</div>' +
             '<div class="card-footer"><span class="key-mask">' + escapeHtml(provider.key_prefix || '••••••••') + '</span><span class="hint">Added ' + escapeHtml(new Date(provider.created_at).toLocaleDateString()) + '</span></div>' +
             '</article>';
@@ -352,6 +368,8 @@ const adminHtml = String.raw`<!doctype html>
         el('api-key').required = false;
         el('api-key').placeholder = 'Leave blank to keep the saved key';
         el('models').value = Array.isArray(provider.models) ? provider.models.join('\n') : '';
+        el('input-cost').value = String(provider.input_cost_per_1m_tokens ?? 0);
+        el('output-cost').value = String(provider.output_cost_per_1m_tokens ?? 0);
         if (provider.api_key_expires_at) {
           const date = new Date(provider.api_key_expires_at);
           const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -372,24 +390,24 @@ const adminHtml = String.raw`<!doctype html>
       function setDefaults() {
         const type = el('provider-type').value;
         const input = el('base-url');
-        const localAgy = type === 'agy-cli';
-        if (localAgy) {
-          input.value = 'local://agy';
+        const localCli = isLocalCli(type);
+        if (localCli) {
+          input.value = defaults[type];
         } else if (!input.value || Object.values(defaults).includes(input.value)) {
           input.value = defaults[type] || '';
         }
-        input.readOnly = localAgy;
-        el('api-key').required = !state.editingId && !localAgy;
-        el('api-key').disabled = localAgy;
-        el('api-key').placeholder = localAgy ? 'Not used — AGY runs inside EE Router' : (state.editingId ? 'Leave blank to keep the saved key' : 'Provider API key');
+        input.readOnly = localCli;
+        el('api-key').required = !state.editingId && !localCli;
+        el('api-key').disabled = localCli;
+        el('api-key').placeholder = localCli ? 'Not used — ' + localCliName(type) + ' runs inside EE Router' : (state.editingId ? 'Leave blank to keep the saved key' : 'Provider API key');
       }
 
       async function detectModels() {
         const button = el('detect-btn');
         const baseUrl = el('base-url').value.trim();
         const apiKey = el('api-key').value.trim();
-        const localAgy = el('provider-type').value === 'agy-cli';
-        if (!baseUrl || (!localAgy && !apiKey && !state.editingId)) {
+        const localCli = isLocalCli(el('provider-type').value);
+        if (!baseUrl || (!localCli && !apiKey && !state.editingId)) {
           el('form-status').textContent = state.editingId ? 'Enter a base URL, or provide a replacement API key.' : 'Enter a base URL and API key first.';
           el('form-status').className = 'status error';
           return;
@@ -428,8 +446,8 @@ const adminHtml = String.raw`<!doctype html>
         const button = el('submit-btn');
         const isEditing = Boolean(state.editingId);
         const apiKey = el('api-key').value.trim();
-        const localAgy = el('provider-type').value === 'agy-cli';
-        if (!isEditing && !localAgy && !apiKey) {
+        const localCli = isLocalCli(el('provider-type').value);
+        if (!isEditing && !localCli && !apiKey) {
           el('form-status').textContent = 'Enter a provider API key first.';
           el('form-status').className = 'status error';
           return;
@@ -441,7 +459,9 @@ const adminHtml = String.raw`<!doctype html>
           provider_type: el('provider-type').value,
           base_url: el('base-url').value.trim(),
           models,
-          api_key_expires_at: expiry ? new Date(expiry).toISOString() : null
+          api_key_expires_at: expiry ? new Date(expiry).toISOString() : null,
+          input_cost_per_1m_tokens: Number(el('input-cost').value || 0),
+          output_cost_per_1m_tokens: Number(el('output-cost').value || 0)
         };
         if (apiKey) payload.api_key = apiKey;
         button.disabled = true;

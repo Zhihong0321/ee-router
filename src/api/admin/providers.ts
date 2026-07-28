@@ -5,11 +5,30 @@ import { encryptProviderKey, decryptProviderKey } from '../../security/provider-
 import { discoverModels } from '../../providers/model-discovery.js';
 import { type ProviderConfig } from '../../providers/interface.js';
 
-const providerTypes: ProviderConfig['provider_type'][] = ['openai-compatible', 'anthropic', 'gemini', 'agy-cli', 'custom'];
+const providerTypes: ProviderConfig['provider_type'][] = ['openai-compatible', 'anthropic', 'gemini', 'agy-cli', 'codex-cli', 'custom'];
+
+/** Local CLI providers run inside this service, so they carry no HTTP credential. */
+const localBaseUrls: Partial<Record<ProviderConfig['provider_type'], string>> = {
+  'agy-cli': 'local://agy',
+  'codex-cli': 'local://codex',
+};
+
+function isLocalCliProvider(providerType: ProviderConfig['provider_type']): boolean {
+  return providerType in localBaseUrls;
+}
 
 function parseModels(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.map(model => String(model).trim()).filter(Boolean))];
+}
+
+function validateCost(value: unknown, field: string, fallback = 0): number {
+  if (value === undefined || value === null || value === '') return fallback;
+  const cost = Number(value);
+  if (!Number.isFinite(cost) || cost < 0) {
+    throw new Error(`${field} must be a finite non-negative number`);
+  }
+  return cost;
 }
 
 function validateExpiry(value: unknown): string | null {
@@ -22,7 +41,8 @@ function validateExpiry(value: unknown): string | null {
 }
 
 function validateBaseUrl(value: unknown, providerType: ProviderConfig['provider_type']): string {
-  if (providerType === 'agy-cli') return 'local://agy';
+  const localUrl = localBaseUrls[providerType];
+  if (localUrl) return localUrl;
   if (!value) throw new Error('base_url is required');
   const url = new URL(String(value));
   if (!['http:', 'https:'].includes(url.protocol)) {
@@ -48,7 +68,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
   app.get('/api/admin/providers', async (_request, reply) => {
     try {
       const rows = await query<Record<string, unknown>>(
-        'SELECT id, name, provider_type, base_url, models, is_active, api_key_expires_at, timeout_ms, max_retries, extra_headers, key_prefix, created_at FROM providers ORDER BY created_at DESC'
+        'SELECT id, name, provider_type, base_url, models, is_active, api_key_expires_at, timeout_ms, max_retries, extra_headers, key_prefix, input_cost_per_1m_tokens, output_cost_per_1m_tokens, created_at FROM providers ORDER BY created_at DESC'
       );
       return reply.send(rows);
     } catch (error) {
@@ -61,7 +81,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
     try {
       const body = request.body as { provider_type?: string; base_url?: string; api_key?: string };
       const providerType = validateProviderType(body.provider_type);
-      if (providerType !== 'agy-cli' && !body.api_key) {
+      if (!isLocalCliProvider(providerType) && !body.api_key) {
         return reply.status(400).send({ error: 'api_key is required' });
       }
       const baseUrl = validateBaseUrl(body.base_url, providerType);
@@ -96,7 +116,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
 
       const providerType = validateProviderType(body.provider_type ?? existing.provider_type);
       const baseUrl = validateBaseUrl(body.base_url ?? existing.base_url, providerType);
-      const apiKey = providerType === 'agy-cli'
+      const apiKey = isLocalCliProvider(providerType)
         ? ''
         : body.api_key?.trim() || decryptProviderKey(existing.api_key_enc, existing.api_key_iv);
       const models = await discoverModels({ provider_type: providerType, base_url: baseUrl, api_key: apiKey });
@@ -120,24 +140,28 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         timeout_ms?: number;
         max_retries?: number;
         extra_headers?: Record<string, string>;
+        input_cost_per_1m_tokens?: number | null;
+        output_cost_per_1m_tokens?: number | null;
       };
 
       const providerType = validateProviderType(body.provider_type);
-      if (!body.name || (providerType !== 'agy-cli' && !body.api_key)) {
+      if (!body.name || (!isLocalCliProvider(providerType) && !body.api_key)) {
         return reply.status(400).send({ error: 'name and api_key are required' });
       }
 
       const baseUrl = validateBaseUrl(body.base_url, providerType);
       const models = parseModels(body.models);
       const expiresAt = validateExpiry(body.api_key_expires_at);
+      const inputCost = validateCost(body.input_cost_per_1m_tokens, 'input_cost_per_1m_tokens');
+      const outputCost = validateCost(body.output_cost_per_1m_tokens, 'output_cost_per_1m_tokens');
       const apiKey = body.api_key?.trim() || 'local-agy';
       const credential = encryptProviderKey(apiKey);
       const timeoutMs = body.timeout_ms ?? 60_000;
       const maxRetries = body.max_retries ?? 2;
 
       const rows = await query<{ id: string }>(
-        `INSERT INTO providers (name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, timeout_ms, max_retries, extra_headers, key_prefix)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `INSERT INTO providers (name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, timeout_ms, max_retries, extra_headers, key_prefix, input_cost_per_1m_tokens, output_cost_per_1m_tokens)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          RETURNING id`,
         [
           body.name,
@@ -150,7 +174,9 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
           timeoutMs,
           maxRetries,
           JSON.stringify(body.extra_headers ?? {}),
-          providerType === 'agy-cli' ? 'local' : `key-${apiKey.slice(0, 4)}…`,
+          isLocalCliProvider(providerType) ? 'local' : `key-${apiKey.slice(0, 4)}…`,
+          inputCost,
+          outputCost,
         ]
       );
 
@@ -165,6 +191,8 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         timeout_ms: timeoutMs,
         max_retries: maxRetries,
         extra_headers: body.extra_headers,
+        input_cost_per_1m_tokens: inputCost,
+        output_cost_per_1m_tokens: outputCost,
       });
 
       return reply.status(201).send({ id: rows[0]!.id, models });
@@ -188,6 +216,8 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         timeout_ms?: number;
         max_retries?: number;
         extra_headers?: Record<string, string>;
+        input_cost_per_1m_tokens?: number | null;
+        output_cost_per_1m_tokens?: number | null;
       };
 
       const rows = await query<{
@@ -204,8 +234,10 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         max_retries: number;
         extra_headers: Record<string, string>;
         key_prefix: string | null;
+        input_cost_per_1m_tokens: number;
+        output_cost_per_1m_tokens: number;
       }>(
-        'SELECT id, name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, is_active, timeout_ms, max_retries, extra_headers, key_prefix FROM providers WHERE id = $1',
+        'SELECT id, name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, is_active, timeout_ms, max_retries, extra_headers, key_prefix, input_cost_per_1m_tokens, output_cost_per_1m_tokens FROM providers WHERE id = $1',
         [id],
       );
       const existing = rows[0];
@@ -220,6 +252,8 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
       const expiresAt = body.api_key_expires_at === undefined
         ? validateExpiry(existing.api_key_expires_at)
         : validateExpiry(body.api_key_expires_at);
+      const inputCost = validateCost(body.input_cost_per_1m_tokens, 'input_cost_per_1m_tokens', Number(existing.input_cost_per_1m_tokens ?? 0));
+      const outputCost = validateCost(body.output_cost_per_1m_tokens, 'output_cost_per_1m_tokens', Number(existing.output_cost_per_1m_tokens ?? 0));
       const newApiKey = body.api_key?.trim() || '';
       const apiKey = newApiKey || decryptProviderKey(existing.api_key_enc, existing.api_key_iv);
       const credential = newApiKey ? encryptProviderKey(newApiKey) : {
@@ -235,9 +269,10 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         `UPDATE providers
          SET name = $1, provider_type = $2, base_url = $3, api_key_enc = $4, api_key_iv = $5,
              models = $6, api_key_expires_at = $7, timeout_ms = $8, max_retries = $9,
-             extra_headers = $10, key_prefix = $11, updated_at = NOW()
-         WHERE id = $12`,
-        [name, providerType, baseUrl, credential.encrypted, credential.iv, models, expiresAt, timeoutMs, maxRetries, JSON.stringify(extraHeaders), keyPrefix, id],
+             extra_headers = $10, key_prefix = $11, input_cost_per_1m_tokens = $12,
+             output_cost_per_1m_tokens = $13, updated_at = NOW()
+         WHERE id = $14`,
+        [name, providerType, baseUrl, credential.encrypted, credential.iv, models, expiresAt, timeoutMs, maxRetries, JSON.stringify(extraHeaders), keyPrefix, inputCost, outputCost, id],
       );
 
       providerRegistry.register({
@@ -252,6 +287,8 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         timeout_ms: timeoutMs,
         max_retries: maxRetries,
         extra_headers: extraHeaders,
+        input_cost_per_1m_tokens: inputCost,
+        output_cost_per_1m_tokens: outputCost,
       });
 
       return reply.send({ id, models });

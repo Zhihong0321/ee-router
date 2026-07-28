@@ -4,6 +4,7 @@ import { AnthropicAdapter } from './anthropic-adapter.js';
 import { CustomProviderAdapter } from './custom-adapter.js';
 import { GeminiAdapter } from './gemini-adapter.js';
 import { AgyCliAdapter } from './agy-cli-adapter.js';
+import { CodexCliAdapter } from './codex-cli-adapter.js';
 import { decryptProviderKey } from '../security/provider-key.js';
 
 export class ProviderRegistry {
@@ -23,6 +24,9 @@ export class ProviderRegistry {
         break;
       case 'agy-cli':
         adapter = new AgyCliAdapter(config);
+        break;
+      case 'codex-cli':
+        adapter = new CodexCliAdapter(config);
         break;
       case 'custom':
         adapter = new CustomProviderAdapter(config);
@@ -63,6 +67,8 @@ export class ProviderRegistry {
         timeout_ms: (row.timeout_ms as number) ?? 60_000,
         max_retries: (row.max_retries as number) ?? 2,
         extra_headers: row.extra_headers as Record<string, string> | undefined,
+        input_cost_per_1m_tokens: Number(row.input_cost_per_1m_tokens ?? 0),
+        output_cost_per_1m_tokens: Number(row.output_cost_per_1m_tokens ?? 0),
       });
     }
   }

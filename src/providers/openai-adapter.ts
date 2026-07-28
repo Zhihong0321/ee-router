@@ -19,6 +19,7 @@ export class OpenAIAdapter implements ProviderAdapter {
     if (req.temperature !== undefined) body.temperature = req.temperature;
     if (req.max_tokens !== undefined) body.max_tokens = req.max_tokens;
     if (req.tools !== undefined) body.tools = req.tools;
+    if (req.stream_options !== undefined) body.stream_options = req.stream_options;
 
     return {
       body,

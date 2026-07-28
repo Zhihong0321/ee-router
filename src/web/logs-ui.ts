@@ -186,17 +186,23 @@ const logsHtml = String.raw`<!doctype html>
         const rows = state.logs.map(log => {
           const status = String(log.status || 'error').toLowerCase();
           const error = log.error_message ? '<div class="error-message">' + escapeHtml(log.error_message) + '</div>' : '<span class="muted">—</span>';
+          const usage = log.total_tokens == null
+            ? '<span class="muted">—</span>'
+            : escapeHtml(String(log.prompt_tokens ?? 0) + ' in · ' + String(log.completion_tokens ?? 0) + ' out · ' + String(log.total_tokens ?? 0) + ' total');
+          const cost = log.cost_usd == null ? '<span class="muted">—</span>' : '$' + escapeHtml(Number(log.cost_usd).toFixed(6));
           return '<tr>' +
             '<td>' + escapeHtml(formatTime(log.created_at)) + '</td>' +
             '<td><span class="mono">' + escapeHtml(log.api_key_prefix) + '</span></td>' +
             '<td><span class="mono">' + escapeHtml(log.model) + '</span></td>' +
             '<td>' + escapeHtml(log.provider_name || 'router') + '</td>' +
             '<td><span class="badge ' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></td>' +
+            '<td>' + usage + '</td>' +
+            '<td>' + cost + '</td>' +
             '<td>' + escapeHtml(String(log.latency_ms ?? 0)) + ' ms</td>' +
             '<td>' + error + '</td>' +
           '</tr>';
         }).join('');
-        area.innerHTML = '<table><thead><tr><th>Time</th><th>Key</th><th>Model</th><th>Provider</th><th>Status</th><th>Latency</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table>';
+        area.innerHTML = '<table><thead><tr><th>Time</th><th>Key</th><th>Model</th><th>Provider</th><th>Status</th><th>Tokens</th><th>Cost</th><th>Latency</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table>';
       }
       async function load() {
         try {

@@ -26,7 +26,7 @@ export async function registerAdminLogRoutes(app: FastifyInstance): Promise<void
       const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
       const rows = await query<Record<string, unknown>>(
-        `SELECT id, api_key_id, api_key_prefix, provider_id, provider_name, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, ttfb_ms, is_streaming, status, error_message, created_at
+        `SELECT id, api_key_id, api_key_prefix, provider_id, provider_name, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, latency_ms, ttfb_ms, is_streaming, status, error_message, created_at
          FROM request_logs ${where}
          ORDER BY created_at DESC
          LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
@@ -50,7 +50,8 @@ export async function registerAdminStatsRoutes(app: FastifyInstance): Promise<vo
             COUNT(*)::int AS total_requests,
             COALESCE(AVG(latency_ms), 0)::int AS avg_latency_ms,
             COALESCE(AVG(ttfb_ms), 0)::int AS avg_ttfb_ms,
-            COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens
+            COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
+            COALESCE(SUM(cost_usd), 0)::numeric AS total_cost_usd
           FROM request_logs`
         ),
         query<Record<string, unknown>>(
@@ -80,6 +81,7 @@ export async function registerAdminStatsRoutes(app: FastifyInstance): Promise<vo
         avg_latency_ms: totals[0]?.avg_latency_ms ?? 0,
         avg_ttfb_ms: totals[0]?.avg_ttfb_ms ?? 0,
         total_tokens: totals[0]?.total_tokens ?? 0,
+        total_cost_usd: totals[0]?.total_cost_usd ?? 0,
         today_count: todayCounts[0]?.count ?? 0,
         today_success_rate: todayCounts[0]?.success_rate ?? 100,
         total_providers: healthSummary[0]?.total_providers ?? 0,
