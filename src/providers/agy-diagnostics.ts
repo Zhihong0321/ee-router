@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export type AgyDiagnosticOperation = 'chat' | 'models' | 'health' | 'version' | 'oauth-verify';
+export type AgyDiagnosticOperation = 'chat' | 'models' | 'health' | 'version' | 'oauth-verify' | 'oauth-login';
 export type AgyDiagnosticStatus = 'success' | 'error' | 'timeout';
 
 export interface AgyDiagnosticRecord {

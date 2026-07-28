@@ -245,4 +245,59 @@ describe('AGY admin operations API', () => {
     expect(adapter.listModels).toHaveBeenCalled();
     expect(adapter.execute).toHaveBeenCalled();
   });
+
+  it('operates a constrained OAuth process through start, status, code, and cancel endpoints', async () => {
+    const home = await makeRoot('eter-agy-oauth-session-home-');
+    const snapshot = {
+      session_id: 'oauth-session-test',
+      state: 'waiting' as const,
+      auth_url: 'https://accounts.google.com/o/oauth2/auth?state=test',
+      started_at: new Date(0).toISOString(),
+      expires_at: new Date(60_000).toISOString(),
+      message: 'Open the Google consent URL',
+      code_required: true,
+      secret_values_returned: false as const,
+    };
+    const oauthController = {
+      start: vi.fn().mockResolvedValue(snapshot),
+      status: vi.fn().mockReturnValue(snapshot),
+      submitCode: vi.fn().mockReturnValue({ ...snapshot, state: 'completing', auth_url: undefined }),
+      cancel: vi.fn().mockReturnValue({ ...snapshot, state: 'cancelled', auth_url: undefined }),
+    };
+    const app = Fastify();
+    apps.push(app);
+    await registerAdminAgyRoutes(app, {
+      getAdapter: () => fakeAdapter(),
+      diagnosticStore: null,
+      home,
+      oauthController,
+    });
+
+    const started = await app.inject({ method: 'POST', url: '/api/admin/agy/oauth/start' });
+    expect(started.statusCode).toBe(201);
+    expect(started.json()).toMatchObject({ session_id: 'oauth-session-test', state: 'waiting' });
+
+    const status = await app.inject({
+      method: 'GET',
+      url: '/api/admin/agy/oauth/session?session_id=oauth-session-test',
+    });
+    expect(status.statusCode).toBe(200);
+
+    const code = await app.inject({
+      method: 'POST',
+      url: '/api/admin/agy/oauth/code',
+      payload: { session_id: 'oauth-session-test', code: '4/0-test-code' },
+    });
+    expect(code.statusCode).toBe(200);
+    expect(oauthController.submitCode).toHaveBeenCalledWith('oauth-session-test', '4/0-test-code');
+    expect(code.body).not.toContain('4/0-test-code');
+
+    const cancelled = await app.inject({
+      method: 'POST',
+      url: '/api/admin/agy/oauth/cancel',
+      payload: { session_id: 'oauth-session-test' },
+    });
+    expect(cancelled.statusCode).toBe(200);
+    expect(oauthController.cancel).toHaveBeenCalledWith('oauth-session-test');
+  });
 });

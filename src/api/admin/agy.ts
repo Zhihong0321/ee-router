@@ -12,6 +12,10 @@ import {
   getDefaultAgyDiagnosticStore,
 } from '../../providers/agy-diagnostics.js';
 import { providerRegistry } from '../../providers/registry.js';
+import {
+  AgyOAuthSessionManager,
+  type AgyOAuthController,
+} from '../../providers/agy-oauth-session.js';
 import { type NormalizedResponse, type ProviderConfig } from '../../providers/interface.js';
 
 interface ProfileFileStatus {
@@ -48,6 +52,7 @@ export interface AgyAdminDependencies {
   diagnosticStore?: AgyDiagnosticStore | null;
   home?: string;
   importKey?: () => string | undefined;
+  oauthController?: AgyOAuthController;
 }
 
 const PROFILE_FILES = ['oauth_creds.json', 'google_accounts.json', 'settings.json'] as const;
@@ -185,6 +190,10 @@ export async function registerAdminAgyRoutes(
     : dependencies.diagnosticStore;
   const home = dependencies.home ?? process.env.AGY_HOME ?? process.env.HOME ?? '/storage';
   const getImportKey = dependencies.importKey ?? (() => process.env.AGY_PROFILE_IMPORT_KEY);
+  const oauth = dependencies.oauthController ?? new AgyOAuthSessionManager({
+    home,
+    diagnosticStore: diagnostics,
+  });
 
   app.get('/api/admin/agy', async (_request, reply) => reply.send({
     service_boundary: 'ee-router-local-process',
@@ -200,6 +209,10 @@ export async function registerAdminAgyRoutes(
       'GET /api/admin/agy/logs?limit=50',
       'GET /api/admin/agy/logs/:traceId',
       'GET /api/admin/agy/oauth/status',
+      'POST /api/admin/agy/oauth/start',
+      'GET /api/admin/agy/oauth/session?session_id=<id>',
+      'POST /api/admin/agy/oauth/code',
+      'POST /api/admin/agy/oauth/cancel',
       'GET /api/admin/agy/oauth/import',
       'POST /api/admin/agy/oauth/import',
       'POST /api/admin/agy/oauth/verify',
@@ -303,6 +316,51 @@ export async function registerAdminAgyRoutes(
   });
 
   app.get('/api/admin/agy/oauth/status', async (_request, reply) => reply.send(await inspectProfile(home)));
+
+  app.post('/api/admin/agy/oauth/start', async (_request, reply) => {
+    try {
+      return reply.status(201).send(await oauth.start());
+    } catch (error) {
+      return reply.status(409).send({
+        error: { type: 'agy_oauth_error', message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  });
+
+  app.get('/api/admin/agy/oauth/session', async (request, reply) => {
+    const query = request.query as { session_id?: string };
+    const session = oauth.status(query.session_id);
+    if (!session) return reply.status(404).send({ error: { type: 'agy_oauth_error', message: 'Antigravity OAuth session not found' } });
+    return reply.send(session);
+  });
+
+  app.post('/api/admin/agy/oauth/code', async (request, reply) => {
+    try {
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      if (typeof body.session_id !== 'string' || typeof body.code !== 'string') {
+        return reply.status(400).send({ error: { type: 'invalid_request_error', message: 'session_id and code are required' } });
+      }
+      return reply.send(oauth.submitCode(body.session_id, body.code));
+    } catch (error) {
+      return reply.status(409).send({
+        error: { type: 'agy_oauth_error', message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  });
+
+  app.post('/api/admin/agy/oauth/cancel', async (request, reply) => {
+    try {
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      if (typeof body.session_id !== 'string') {
+        return reply.status(400).send({ error: { type: 'invalid_request_error', message: 'session_id is required' } });
+      }
+      return reply.send(oauth.cancel(body.session_id));
+    } catch (error) {
+      return reply.status(409).send({
+        error: { type: 'agy_oauth_error', message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  });
 
   app.get('/api/admin/agy/oauth/import', async (_request, reply) => {
     const key = getImportKey();
