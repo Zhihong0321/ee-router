@@ -222,16 +222,32 @@ export function responsesRequestToNormalized(body: JsonObject): NormalizedReques
   }
 
   const messages: NormalizedMessage[] = [];
+  // Codex code mode ships its tool declarations as an `additional_tools` input
+  // item instead of the top-level `tools` field.
+  const hoistedTools: unknown[] = [];
   if (typeof body.instructions === 'string' && body.instructions) {
     messages.push({ role: 'system', content: body.instructions });
   }
   if (typeof body.input === 'string') {
     messages.push({ role: 'user', content: body.input });
   } else if (Array.isArray(body.input)) {
-    for (const item of body.input) messages.push(...inputItemToMessages(item));
+    for (const item of body.input) {
+      const declaration = asObject(item);
+      if (declaration?.type === 'additional_tools') {
+        if (Array.isArray(declaration.tools)) hoistedTools.push(...declaration.tools);
+        continue;
+      }
+      messages.push(...inputItemToMessages(item));
+    }
   } else {
     throw new ResponsesCompatibilityError('input must be a string or an array of input items');
   }
+
+  if (body.tools !== undefined && !Array.isArray(body.tools)) {
+    throw new ResponsesCompatibilityError('tools must be an array');
+  }
+  const declaredTools = [...(body.tools as unknown[] ?? []), ...hoistedTools];
+  const tools = declaredTools.length > 0 ? toolsToChat(declaredTools) : undefined;
 
   return {
     model: body.model,
@@ -239,9 +255,13 @@ export function responsesRequestToNormalized(body: JsonObject): NormalizedReques
     stream: body.stream === true,
     temperature: typeof body.temperature === 'number' ? body.temperature : undefined,
     max_completion_tokens: typeof body.max_output_tokens === 'number' ? body.max_output_tokens : undefined,
-    tools: toolsToChat(body.tools),
-    tool_choice: toolChoiceToChat(body.tool_choice),
-    parallel_tool_calls: typeof body.parallel_tool_calls === 'boolean' ? body.parallel_tool_calls : undefined,
+    tools,
+    // Chat Completions upstreams reject tool settings that reference an empty
+    // tool list, so both only travel with real tools.
+    tool_choice: tools ? toolChoiceToChat(body.tool_choice) : undefined,
+    parallel_tool_calls: tools && typeof body.parallel_tool_calls === 'boolean'
+      ? body.parallel_tool_calls
+      : undefined,
     response_format: responseFormatToChat(body.text),
   };
 }

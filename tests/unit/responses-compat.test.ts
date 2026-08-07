@@ -171,6 +171,47 @@ describe('Responses API request compatibility', () => {
       tools: [{ type: 'web_search' }],
     }).tools).toBeUndefined();
   });
+
+  it('hoists Codex code-mode tools out of the additional_tools input item', () => {
+    const normalized = responsesRequestToNormalized({
+      model: 'model',
+      tool_choice: 'auto',
+      parallel_tool_calls: false,
+      input: [
+        {
+          type: 'additional_tools',
+          role: 'developer',
+          tools: [{ type: 'custom', name: 'exec', description: 'Run JavaScript' }],
+        },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+      ],
+    });
+
+    expect(normalized.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }]);
+    expect(normalized.tools).toEqual([{
+      type: 'function',
+      function: {
+        name: 'exec',
+        description: 'Run JavaScript',
+        parameters: { type: 'object', properties: { input: { type: 'string' } }, required: ['input'] },
+      },
+    }]);
+    expect(normalized.tool_choice).toBe('auto');
+    expect(normalized.parallel_tool_calls).toBe(false);
+  });
+
+  it('never sends tool settings without tools', () => {
+    const normalized = responsesRequestToNormalized({
+      model: 'model',
+      input: 'Hello',
+      tool_choice: 'auto',
+      parallel_tool_calls: false,
+    });
+
+    expect(normalized.tools).toBeUndefined();
+    expect(normalized.tool_choice).toBeUndefined();
+    expect(normalized.parallel_tool_calls).toBeUndefined();
+  });
 });
 
 describe('Responses API output compatibility', () => {
