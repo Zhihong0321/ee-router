@@ -188,6 +188,101 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
         }
       }
 
+      // 7. Test through the router's own Responses API (what Codex app uses)
+      if (url.searchParams.get('test') === 'true' && eligibleProviders.length > 0) {
+        const keyInfo2 = keyRows[0] as Record<string, unknown>;
+        const keyId = keyInfo2.id as string;
+        // Reconstruct a minimal API key to call /v1/responses — we can't, so
+        // instead test the raw upstream streaming path the router would use.
+        const provider = eligibleProviders[0] as Record<string, unknown>;
+        const providerId = provider.id as string;
+        const adapter2 = providerRegistry.getAdapter(providerId);
+        if (adapter2 && !adapter2.execute) {
+          const baseUrl = (provider.base_url as string).replace(/\/$/, '');
+          const upstreamUrl = baseUrl + '/chat/completions';
+
+          // Test 3: streaming request with tools (exactly what Codex sends)
+          try {
+            const res = await fetch(upstreamUrl, {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Bearer ' + adapter2.config.api_key,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model,
+                messages: [
+                  { role: 'system', content: 'You are a helpful assistant.' },
+                  { role: 'user', content: 'say hi' },
+                ],
+                max_tokens: 50,
+                tools: [{
+                  type: 'function',
+                  function: {
+                    name: 'apply_patch',
+                    description: 'Apply a patch',
+                    parameters: {
+                      type: 'object',
+                      properties: { input: { type: 'string' } },
+                      required: ['input'],
+                    },
+                  },
+                }],
+                tool_choice: 'auto',
+                parallel_tool_calls: true,
+                stream: true,
+                stream_options: { include_usage: true },
+              }),
+              signal: AbortSignal.timeout(15_000),
+            });
+            const text = await res.text();
+            result.upstream_test_stream = { status: res.status, body: text.slice(0, 3000) };
+          } catch (e) {
+            result.upstream_test_stream = { error: String(e) };
+          }
+
+          // Test 4: same test with deepseek-v4-pro for comparison
+          try {
+            const res = await fetch(upstreamUrl, {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Bearer ' + adapter2.config.api_key,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'deepseek-v4-pro',
+                messages: [
+                  { role: 'system', content: 'You are a helpful assistant.' },
+                  { role: 'user', content: 'say hi' },
+                ],
+                max_tokens: 50,
+                tools: [{
+                  type: 'function',
+                  function: {
+                    name: 'apply_patch',
+                    description: 'Apply a patch',
+                    parameters: {
+                      type: 'object',
+                      properties: { input: { type: 'string' } },
+                      required: ['input'],
+                    },
+                  },
+                }],
+                tool_choice: 'auto',
+                parallel_tool_calls: true,
+                stream: true,
+                stream_options: { include_usage: true },
+              }),
+              signal: AbortSignal.timeout(15_000),
+            });
+            const text = await res.text();
+            result.upstream_test_stream_pro = { status: res.status, body: text.slice(0, 3000) };
+          } catch (e) {
+            result.upstream_test_stream_pro = { error: String(e) };
+          }
+        }
+      }
+
     } catch (err) {
       result.db_error = String(err);
     }
