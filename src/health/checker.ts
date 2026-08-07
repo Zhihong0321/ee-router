@@ -32,7 +32,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
     // 1. Look up the API key
     try {
       const keyRows = await query<Record<string, unknown>>(
-        'SELECT id, name, key_prefix, is_active, provider_ids, allowed_models, backup_provider_id FROM api_keys WHERE key_hash = $1',
+        'SELECT id, name, key_prefix, is_active, provider_ids, allowed_models FROM api_keys WHERE key_hash = $1',
         [keyHash]
       );
       const keyInfo = keyRows[0];
