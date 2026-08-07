@@ -116,6 +116,78 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
         ? 'No active provider has this model in its models list'
         : 'Model is available — issue may be upstream';
 
+      // 6. If test=true, actually send a request to the upstream provider
+      if (url.searchParams.get('test') === 'true' && eligibleProviders.length > 0) {
+        const provider = eligibleProviders[0] as Record<string, unknown>;
+        const providerId = provider.id as string;
+        const adapter = providerRegistry.getAdapter(providerId);
+        if (adapter && !adapter.execute) {
+          const baseUrl = (provider.base_url as string).replace(/\/$/, '');
+          const upstreamUrl = baseUrl + '/chat/completions';
+          result.upstream_url = upstreamUrl;
+
+          // Test 1: simple request, no tools
+          try {
+            const res = await fetch(upstreamUrl, {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Bearer ' + adapter.config.api_key,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model,
+                messages: [{ role: 'user', content: 'say hi' }],
+                max_tokens: 5,
+              }),
+              signal: AbortSignal.timeout(15_000),
+            });
+            const text = await res.text();
+            result.upstream_test_simple = { status: res.status, body: text.slice(0, 2000) };
+          } catch (e) {
+            result.upstream_test_simple = { error: String(e) };
+          }
+
+          // Test 2: request with tools (what Codex app sends)
+          try {
+            const res = await fetch(upstreamUrl, {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Bearer ' + adapter.config.api_key,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model,
+                messages: [
+                  { role: 'system', content: 'You are a helpful assistant.' },
+                  { role: 'user', content: 'say hi' },
+                ],
+                max_tokens: 5,
+                tools: [{
+                  type: 'function',
+                  function: {
+                    name: 'apply_patch',
+                    description: 'Apply a patch',
+                    parameters: {
+                      type: 'object',
+                      properties: { input: { type: 'string' } },
+                      required: ['input'],
+                    },
+                  },
+                }],
+                tool_choice: 'auto',
+                parallel_tool_calls: true,
+                stream: false,
+              }),
+              signal: AbortSignal.timeout(15_000),
+            });
+            const text = await res.text();
+            result.upstream_test_with_tools = { status: res.status, body: text.slice(0, 2000) };
+          } catch (e) {
+            result.upstream_test_with_tools = { error: String(e) };
+          }
+        }
+      }
+
     } catch (err) {
       result.db_error = String(err);
     }
