@@ -72,6 +72,7 @@ export class ProviderRegistry {
         timeout_ms: (row.timeout_ms as number) ?? 60_000,
         max_retries: (row.max_retries as number) ?? 2,
         extra_headers: row.extra_headers as Record<string, string> | undefined,
+        strip_tools_models: row.strip_tools_models as string[] | undefined,
       });
     }
   }

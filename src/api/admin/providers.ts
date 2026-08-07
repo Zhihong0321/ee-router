@@ -86,7 +86,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
   app.get('/api/admin/providers', async (_request, reply) => {
     try {
       const rows = await query<Record<string, unknown>>(
-        'SELECT id, name, provider_type, base_url, models, is_active, api_key_expires_at, timeout_ms, max_retries, extra_headers, key_prefix, created_at FROM providers ORDER BY created_at DESC'
+        'SELECT id, name, provider_type, base_url, models, is_active, api_key_expires_at, timeout_ms, max_retries, extra_headers, strip_tools_models, key_prefix, created_at FROM providers ORDER BY created_at DESC'
       );
       return reply.send(rows);
     } catch (error) {
@@ -233,11 +233,12 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         api_key_expires_at?: string | null;
         timeout_ms?: number;
         max_retries?: number;
-        extra_headers?: Record<string, string>;
-      };
+      extra_headers?: Record<string, string>;
+      strip_tools_models?: unknown;
+    };
 
-      const providerType = validateProviderType(body.provider_type);
-      if (!body.name || (!isLocalCliProvider(providerType) && !body.api_key)) {
+    const providerType = validateProviderType(body.provider_type);
+    if (!body.name || (!isLocalCliProvider(providerType) && !body.api_key)) {
         return reply.status(400).send({ error: 'name and api_key are required' });
       }
 
@@ -250,8 +251,8 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
       const maxRetries = body.max_retries ?? 2;
 
       const rows = await query<{ id: string }>(
-        `INSERT INTO providers (name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, timeout_ms, max_retries, extra_headers, key_prefix)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `INSERT INTO providers (name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, timeout_ms, max_retries, extra_headers, strip_tools_models, key_prefix)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING id`,
         [
           body.name,
@@ -264,6 +265,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
           timeoutMs,
           maxRetries,
           JSON.stringify(body.extra_headers ?? {}),
+          parseModels(body.strip_tools_models),
           isLocalCliProvider(providerType) ? 'local' : `key-${apiKey.slice(0, 4)}…`,
         ]
       );
@@ -279,6 +281,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         timeout_ms: timeoutMs,
         max_retries: maxRetries,
         extra_headers: body.extra_headers,
+        strip_tools_models: parseModels(body.strip_tools_models),
       });
 
       return reply.status(201).send({ id: rows[0]!.id, models });
@@ -302,6 +305,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         timeout_ms?: number;
         max_retries?: number;
         extra_headers?: Record<string, string>;
+        strip_tools_models?: unknown;
       };
 
       const rows = await query<{
@@ -317,9 +321,10 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         timeout_ms: number;
         max_retries: number;
         extra_headers: Record<string, string>;
+        strip_tools_models?: string[];
         key_prefix: string | null;
       }>(
-        'SELECT id, name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, is_active, timeout_ms, max_retries, extra_headers, key_prefix FROM providers WHERE id = $1',
+       'SELECT id, name, provider_type, base_url, api_key_enc, api_key_iv, models, api_key_expires_at, is_active, timeout_ms, max_retries, extra_headers, strip_tools_models, key_prefix FROM providers WHERE id = $1',
         [id],
       );
       const existing = rows[0];
@@ -331,6 +336,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
       const providerType = validateProviderType(body.provider_type ?? existing.provider_type);
       const baseUrl = validateBaseUrl(body.base_url ?? existing.base_url, providerType);
       const models = body.models === undefined ? existing.models : parseModels(body.models);
+      const stripToolsModels = body.strip_tools_models === undefined ? (existing.strip_tools_models ?? []) : parseModels(body.strip_tools_models);
       const expiresAt = body.api_key_expires_at === undefined
         ? validateExpiry(existing.api_key_expires_at)
         : validateExpiry(body.api_key_expires_at);
@@ -345,13 +351,13 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
       const maxRetries = body.max_retries ?? existing.max_retries;
       const extraHeaders = body.extra_headers ?? existing.extra_headers ?? {};
 
-      await query(
-        `UPDATE providers
-         SET name = $1, provider_type = $2, base_url = $3, api_key_enc = $4, api_key_iv = $5,
-             models = $6, api_key_expires_at = $7, timeout_ms = $8, max_retries = $9,
-             extra_headers = $10, key_prefix = $11, updated_at = NOW()
-         WHERE id = $12`,
-        [name, providerType, baseUrl, credential.encrypted, credential.iv, models, expiresAt, timeoutMs, maxRetries, JSON.stringify(extraHeaders), keyPrefix, id],
+     await query(
+       `UPDATE providers
+        SET name = $1, provider_type = $2, base_url = $3, api_key_enc = $4, api_key_iv = $5,
+            models = $6, api_key_expires_at = $7, timeout_ms = $8, max_retries = $9,
+            extra_headers = $10, strip_tools_models = $11, key_prefix = $12, updated_at = NOW()
+        WHERE id = $13`,
+        [name, providerType, baseUrl, credential.encrypted, credential.iv, models, expiresAt, timeoutMs, maxRetries, JSON.stringify(extraHeaders), stripToolsModels, keyPrefix, id],
       );
 
       providerRegistry.register({
@@ -366,6 +372,7 @@ export async function registerAdminProviderRoutes(app: FastifyInstance): Promise
         timeout_ms: timeoutMs,
         max_retries: maxRetries,
         extra_headers: extraHeaders,
+        strip_tools_models: stripToolsModels,
       });
       providerRegistry.setModelCosts(id, await loadModelCosts(id));
 

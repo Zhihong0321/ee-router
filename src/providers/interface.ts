@@ -89,6 +89,8 @@ export interface ProviderConfig {
   extra_headers?: Record<string, string>;
   /** USD pricing by the provider's configured model ID. */
   model_costs?: Record<string, ModelCost>;
+  /** Models that should not receive tools — the upstream mishandles tool calls. */
+  strip_tools_models?: string[];
 }
 
 export interface ProviderAdapter {
