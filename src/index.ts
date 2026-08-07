@@ -119,7 +119,7 @@ async function main(): Promise<void> {
     global: true,
     max: env.RATE_LIMIT_MAX,
     timeWindow: '1 minute',
-    allowList: request => request.url === '/health',
+    allowList: request => request.url === '/health' || request.url.startsWith('/health/'),
   });
   // Password gate: one login unlocks the whole site for SESSION_TTL_HOURS.
   const openPaths = new Set(['/health', '/login', '/logout']);
@@ -128,6 +128,7 @@ async function main(): Promise<void> {
 
     const path = request.url.split('?')[0] ?? '/';
     if (openPaths.has(path)) return;
+    if (path.startsWith('/health/')) return;
 
     // A valid password session unlocks everything, including /api/admin/*.
     if (hasValidSession(request)) return;
