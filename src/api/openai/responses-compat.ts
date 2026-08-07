@@ -27,40 +27,77 @@ function asObject(value: unknown): JsonObject | null {
     : null;
 }
 
+function preview(value: unknown): string {
+  try {
+    const text = JSON.stringify(value);
+    if (text === undefined) return String(value);
+    return text.length > 200 ? `${text.slice(0, 200)}...` : text;
+  } catch {
+    return String(value);
+  }
+}
+
+const TEXT_PART_TYPES = new Set(['input_text', 'output_text', 'text', 'summary_text']);
+
 function contentToChat(content: unknown): string | Array<Record<string, unknown>> {
   if (typeof content === 'string') return content;
-  if (content === null) return '';
+  if (content === null || content === undefined) return '';
   const parts = Array.isArray(content)
     ? content
     : asObject(content)
       ? [content]
       : null;
-  if (!parts) throw new ResponsesCompatibilityError('Message content must be a string, object, or array');
+  if (!parts) {
+    throw new ResponsesCompatibilityError(
+      `Message content must be a string, object, or array (received ${preview(content)})`,
+    );
+  }
+  if (parts.length === 0) return '';
 
   return parts.map(partValue => {
+    if (typeof partValue === 'string') return { type: 'text', text: partValue };
     const part = asObject(partValue);
-    if (!part) throw new ResponsesCompatibilityError('Each message content part must be an object');
-    if (part.type === 'input_text' || part.type === 'output_text') {
+    if (!part) {
+      throw new ResponsesCompatibilityError(`Each message content part must be an object (received ${preview(partValue)})`);
+    }
+    if (TEXT_PART_TYPES.has(String(part.type))) {
       return { type: 'text', text: String(part.text ?? '') };
     }
+    if (part.type === 'refusal') {
+      return { type: 'text', text: String(part.refusal ?? part.text ?? '') };
+    }
     if (part.type === 'input_image') {
-      const imageUrl = part.image_url;
+      const imageUrl = typeof part.image_url === 'string'
+        ? part.image_url
+        : asObject(part.image_url)?.url;
       if (typeof imageUrl !== 'string') {
         throw new ResponsesCompatibilityError('input_image requires a string image_url');
       }
       return { type: 'image_url', image_url: { url: imageUrl, detail: part.detail ?? 'auto' } };
     }
-    throw new ResponsesCompatibilityError(`Unsupported Responses content type: ${String(part.type)}`);
+    if (typeof part.text === 'string') return { type: 'text', text: part.text };
+    throw new ResponsesCompatibilityError(`Unsupported Responses content type: ${String(part.type)} (${preview(part)})`);
   });
 }
 
+const IGNORED_INPUT_ITEM_TYPES = new Set([
+  'reasoning',
+  'item_reference',
+  'web_search_call',
+  'file_search_call',
+  'computer_call',
+  'computer_call_output',
+]);
+
 function inputItemToMessages(itemValue: unknown): NormalizedMessage[] {
   const item = asObject(itemValue);
-  if (!item) throw new ResponsesCompatibilityError('Each input item must be an object');
+  if (!item) throw new ResponsesCompatibilityError(`Each input item must be an object (received ${preview(itemValue)})`);
 
-  if (item.type === 'function_call_output') {
+  if (typeof item.type === 'string' && IGNORED_INPUT_ITEM_TYPES.has(item.type)) return [];
+
+  if (item.type === 'function_call_output' || item.type === 'custom_tool_call_output') {
     if (typeof item.call_id !== 'string') {
-      throw new ResponsesCompatibilityError('function_call_output requires call_id');
+      throw new ResponsesCompatibilityError(`${item.type} requires call_id`);
     }
     return [{
       role: 'tool',
@@ -69,24 +106,28 @@ function inputItemToMessages(itemValue: unknown): NormalizedMessage[] {
     }];
   }
 
-  if (item.type === 'function_call') {
+  if (item.type === 'function_call' || item.type === 'custom_tool_call') {
     const name = typeof item.name === 'string' ? item.name : '';
     const callId = typeof item.call_id === 'string' ? item.call_id : id('fc');
+    const rawArguments = item.arguments ?? item.input;
     const toolCall: ToolCallDelta = {
       id: callId,
       type: 'function',
       function: {
         name,
-        arguments: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments ?? {}),
+        arguments: typeof rawArguments === 'string' ? rawArguments : JSON.stringify(rawArguments ?? {}),
       },
     };
     return [{ role: 'assistant', content: '', tool_calls: [toolCall] }];
   }
 
-  const role = typeof item.role === 'string' ? item.role : '';
-  if (!['user', 'assistant', 'system', 'developer'].includes(role)) {
-    throw new ResponsesCompatibilityError(`Unsupported Responses input item: ${String(item.type ?? (role || 'unknown'))}`);
+  const rawRole = typeof item.role === 'string' ? item.role : '';
+  if (!['user', 'assistant', 'system', 'developer'].includes(rawRole)) {
+    throw new ResponsesCompatibilityError(
+      `Unsupported Responses input item: ${String(item.type ?? (rawRole || 'unknown'))} (${preview(item)})`,
+    );
   }
+  const role = rawRole === 'developer' ? 'system' : rawRole;
   return [{ role, content: contentToChat(item.content) as NormalizedMessage['content'] }];
 }
 

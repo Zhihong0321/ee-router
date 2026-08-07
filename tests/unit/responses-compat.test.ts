@@ -78,6 +78,61 @@ describe('Responses API request compatibility', () => {
     }]);
   });
 
+  it('accepts Codex items with missing, empty, or plain-text content', () => {
+    expect(responsesRequestToNormalized({
+      model: 'model',
+      input: [
+        { type: 'message', role: 'assistant' },
+        { type: 'message', role: 'user', content: [] },
+        { type: 'message', role: 'developer', content: [{ type: 'text', text: 'Be terse.' }] },
+      ],
+    }).messages).toEqual([
+      { role: 'assistant', content: '' },
+      { role: 'user', content: '' },
+      { role: 'system', content: [{ type: 'text', text: 'Be terse.' }] },
+    ]);
+  });
+
+  it('drops Responses-only items that have no Chat Completions equivalent', () => {
+    expect(responsesRequestToNormalized({
+      model: 'model',
+      input: [
+        { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'xxx' },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Hi' }] },
+      ],
+    }).messages).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'Hi' }] },
+    ]);
+  });
+
+  it('translates Codex custom tool calls and their outputs', () => {
+    expect(responsesRequestToNormalized({
+      model: 'model',
+      input: [
+        { type: 'custom_tool_call', call_id: 'call_2', name: 'apply_patch', input: '*** Begin Patch' },
+        { type: 'custom_tool_call_output', call_id: 'call_2', output: 'done' },
+      ],
+    }).messages).toEqual([
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: 'call_2',
+          type: 'function',
+          function: { name: 'apply_patch', arguments: '*** Begin Patch' },
+        }],
+      },
+      { role: 'tool', tool_call_id: 'call_2', content: 'done' },
+    ]);
+  });
+
+  it('reports the offending payload when content is not translatable', () => {
+    expect(() => responsesRequestToNormalized({
+      model: 'model',
+      input: [{ type: 'message', role: 'user', content: 42 }],
+    })).toThrow('received 42');
+  });
+
   it('rejects Responses-only state and hosted tools', () => {
     expect(() => responsesRequestToNormalized({
       model: 'model',
