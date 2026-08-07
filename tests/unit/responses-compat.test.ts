@@ -121,7 +121,7 @@ describe('Responses API request compatibility', () => {
         tool_calls: [{
           id: 'call_2',
           type: 'function',
-          function: { name: 'apply_patch', arguments: '*** Begin Patch' },
+          function: { name: 'apply_patch', arguments: '{"input":"*** Begin Patch"}' },
         }],
       },
       { role: 'tool', tool_call_id: 'call_2', content: 'done' },

@@ -154,7 +154,11 @@ function inputItemToMessages(itemValue: unknown): NormalizedMessage[] {
   if (item.type === 'function_call' || item.type === 'custom_tool_call') {
     const name = typeof item.name === 'string' ? item.name : '';
     const callId = typeof item.call_id === 'string' ? item.call_id : id('fc');
-    const rawArguments = item.arguments ?? item.input;
+    // Freeform input is not JSON, so it is re-wrapped in the `{ input }` shape
+    // that the translated function tool declares.
+    const rawArguments = item.type === 'custom_tool_call'
+      ? JSON.stringify({ input: typeof item.input === 'string' ? item.input : String(item.input ?? '') })
+      : item.arguments;
     const toolCall: ToolCallDelta = {
       id: callId,
       type: 'function',
