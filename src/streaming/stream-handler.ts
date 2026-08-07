@@ -15,6 +15,7 @@ function normalizedResponsePayload(
   normalized: NormalizedResponse,
   model: string,
   format: ApiFormat,
+  requestKey?: object,
 ): Record<string, unknown> {
   const choice = normalized.choices[0] ?? {
     index: 0,
@@ -22,7 +23,7 @@ function normalizedResponsePayload(
     finish_reason: null,
   };
 
-  if (format === 'responses') return normalizedResponseToResponses(normalized, model);
+  if (format === 'responses') return normalizedResponseToResponses(normalized, model, requestKey);
 
   if (format === 'anthropic') {
     return {
@@ -90,7 +91,7 @@ async function handleLocalStreaming(
     });
 
     if (callFormat === 'responses') {
-      const translator = new ResponsesStreamTranslator(model);
+      const translator = new ResponsesStreamTranslator(model, reply);
       reply.raw.write(translator.start());
       reply.raw.write(translator.consume({
         id: normalized.id,
@@ -298,7 +299,7 @@ export async function handleStreamingProxy(
       const normalized = adapter.translateResponse(data);
       await reply.headers({ 'Content-Type': 'application/json' }).send(
         callFormat === 'responses'
-          ? normalizedResponseToResponses(normalized, requestedModel)
+          ? normalizedResponseToResponses(normalized, requestedModel, reply)
           : adapter.config.provider_type === 'gemini'
             ? geminiResponse(data, adapter, requestedModel, callFormat)
             : data,
@@ -318,7 +319,7 @@ export async function handleStreamingProxy(
     let buffer = '';
     let usage: TokenUsage | undefined;
     const responsesTranslator = callFormat === 'responses'
-      ? new ResponsesStreamTranslator(requestedModel)
+      ? new ResponsesStreamTranslator(requestedModel, reply)
       : null;
     if (responsesTranslator) reply.raw.write(responsesTranslator.start());
 
@@ -388,7 +389,7 @@ export async function handleNonStreamingProxy(
     try {
       const normalized = await adapter.execute(requestBody);
       const ttfbMs = Date.now() - start;
-      await reply.send(normalizedResponsePayload(normalized, requestedModel, callFormat));
+      await reply.send(normalizedResponsePayload(normalized, requestedModel, callFormat, reply));
       return { ttfbMs, status: 'success', usage: normalized.usage };
     } catch (error) {
       return localExecutionError(error, start);
@@ -420,7 +421,7 @@ export async function handleNonStreamingProxy(
     const normalized = adapter.translateResponse(data);
     await reply.send(
       callFormat === 'responses'
-        ? normalizedResponseToResponses(normalized, requestedModel)
+        ? normalizedResponseToResponses(normalized, requestedModel, reply)
         : adapter.config.provider_type === 'gemini'
           ? geminiResponse(data, adapter, requestedModel, callFormat)
           : data,

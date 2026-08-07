@@ -6,6 +6,8 @@ import { routerEngine } from '../../router/engine.js';
 import { writeRequestLog } from '../../router/request-logger.js';
 import { handleNonStreamingProxy, handleStreamingProxy } from '../../streaming/stream-handler.js';
 import {
+  customToolNames,
+  registerCustomTools,
   ResponsesCompatibilityError,
   responsesRequestToNormalized,
 } from './responses-compat.js';
@@ -34,6 +36,7 @@ export async function registerOpenAIResponsesRoute(app: FastifyInstance): Promis
         error: { type: 'invalid_request_error', message },
       });
     }
+    registerCustomTools(reply, customToolNames(body));
 
     const { model, stream } = normalized;
     const adapters = await routerEngine.resolveProviders(auth.keyInfo.id, model);

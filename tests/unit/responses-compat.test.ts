@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { NormalizedChunk, NormalizedResponse } from '../../src/providers/interface.js';
 import {
+  customToolNames,
   normalizedResponseToResponses,
+  registerCustomTools,
   ResponsesCompatibilityError,
   responsesRequestToNormalized,
   ResponsesStreamTranslator,
@@ -211,6 +213,75 @@ describe('Responses API request compatibility', () => {
     expect(normalized.tools).toBeUndefined();
     expect(normalized.tool_choice).toBeUndefined();
     expect(normalized.parallel_tool_calls).toBeUndefined();
+  });
+});
+
+describe('Responses API custom tool round trip', () => {
+  it('returns freeform tool calls as custom_tool_call items', () => {
+    const request = {
+      model: 'model',
+      input: [{
+        type: 'additional_tools',
+        role: 'developer',
+        tools: [{ type: 'custom', name: 'exec' }],
+      }],
+    };
+    const key = {};
+    registerCustomTools(key, customToolNames(request));
+
+    const normalized: NormalizedResponse = {
+      id: 'chatcmpl_1',
+      model: 'model',
+      created: 1,
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: 'call_1',
+            type: 'function',
+            function: { name: 'exec', arguments: '{"input":"await tools.shell()"}' },
+          }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    };
+
+    expect(normalizedResponseToResponses(normalized, 'model', key).output).toEqual([{
+      id: expect.stringMatching(/^ctc_/),
+      type: 'custom_tool_call',
+      status: 'completed',
+      call_id: 'call_1',
+      name: 'exec',
+      input: 'await tools.shell()',
+    }]);
+
+    const translator = new ResponsesStreamTranslator('model', key);
+    const stream = translator.start()
+      + translator.consume({
+        id: 'chunk_1',
+        model: 'model',
+        created: 1,
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'exec', arguments: '{"input":"await tools.shell()"}' },
+            }],
+          },
+          finish_reason: 'tool_calls',
+        }],
+      })
+      + translator.finish();
+
+    expect(stream).toContain('"type":"custom_tool_call"');
+    expect(stream).toContain('event: response.custom_tool_call_input.done');
+    expect(stream).toContain('"input":"await tools.shell()"');
+    expect(stream).not.toContain('function_call_arguments');
   });
 });
 

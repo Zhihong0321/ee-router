@@ -17,8 +17,53 @@ export class ResponsesCompatibilityError extends Error {
   }
 }
 
-function id(prefix: 'resp' | 'msg' | 'fc'): string {
+function id(prefix: 'resp' | 'msg' | 'fc' | 'ctc'): string {
   return `${prefix}_${randomUUID().replaceAll('-', '')}`;
+}
+
+/**
+ * Tools that arrived as Responses `custom` (freeform) tools are translated into
+ * function tools for the Chat Completions upstream, but the client still expects
+ * `custom_tool_call` items back. The names are registered per in-flight request
+ * so the response translators can restore the original item type.
+ */
+const customToolsByRequest = new WeakMap<object, Set<string>>();
+
+export function registerCustomTools(requestKey: object, names: string[]): void {
+  if (names.length > 0) customToolsByRequest.set(requestKey, new Set(names));
+}
+
+function resolveCustomTools(requestKey: object | undefined): Set<string> {
+  return (requestKey && customToolsByRequest.get(requestKey)) ?? new Set();
+}
+
+export function customToolNames(body: JsonObject): string[] {
+  const declared: unknown[] = [];
+  if (Array.isArray(body.tools)) declared.push(...body.tools);
+  if (Array.isArray(body.input)) {
+    for (const item of body.input) {
+      const declaration = asObject(item);
+      if (declaration?.type === 'additional_tools' && Array.isArray(declaration.tools)) {
+        declared.push(...declaration.tools);
+      }
+    }
+  }
+  return declared
+    .map(asObject)
+    .filter(tool => tool?.type === 'custom' && typeof tool.name === 'string')
+    .map(tool => tool!.name as string);
+}
+
+/** Freeform tools are called with a single `input` string argument. */
+function customToolInput(rawArguments: string): string {
+  try {
+    const parsed = JSON.parse(rawArguments) as unknown;
+    const wrapper = asObject(parsed);
+    if (wrapper && typeof wrapper.input === 'string') return wrapper.input;
+  } catch {
+    // Fall through to the raw argument text.
+  }
+  return rawArguments;
 }
 
 function asObject(value: unknown): JsonObject | null {
@@ -287,23 +332,41 @@ function messageOutput(text: string, messageId = id('msg'), status = 'completed'
   };
 }
 
-function functionOutputs(toolCalls: ToolCallDelta[] | undefined): JsonObject[] {
-  return (toolCalls ?? []).map(call => ({
-    id: id('fc'),
-    type: 'function_call',
-    status: 'completed',
-    call_id: call.id ?? id('fc'),
-    name: call.function?.name ?? '',
-    arguments: call.function?.arguments ?? '',
-  }));
+function functionOutputs(toolCalls: ToolCallDelta[] | undefined, customTools: Set<string>): JsonObject[] {
+  return (toolCalls ?? []).map(call => {
+    const name = call.function?.name ?? '';
+    const rawArguments = call.function?.arguments ?? '';
+    if (customTools.has(name)) {
+      return {
+        id: id('ctc'),
+        type: 'custom_tool_call',
+        status: 'completed',
+        call_id: call.id ?? id('ctc'),
+        name,
+        input: customToolInput(rawArguments),
+      };
+    }
+    return {
+      id: id('fc'),
+      type: 'function_call',
+      status: 'completed',
+      call_id: call.id ?? id('fc'),
+      name,
+      arguments: rawArguments,
+    };
+  });
 }
 
-export function normalizedResponseToResponses(normalized: NormalizedResponse, requestedModel: string): JsonObject {
+export function normalizedResponseToResponses(
+  normalized: NormalizedResponse,
+  requestedModel: string,
+  requestKey?: object,
+): JsonObject {
   const choice = normalized.choices[0];
   const text = choice?.message.content ?? '';
   const output: JsonObject[] = [];
   if (text || !choice?.message.tool_calls?.length) output.push(messageOutput(text));
-  output.push(...functionOutputs(choice?.message.tool_calls));
+  output.push(...functionOutputs(choice?.message.tool_calls, resolveCustomTools(requestKey)));
 
   return {
     id: normalized.id.startsWith('resp_') ? normalized.id : id('resp'),
@@ -353,8 +416,32 @@ export class ResponsesStreamTranslator {
   private text = '';
   private textStarted = false;
   private readonly calls = new Map<number, StreamToolCall>();
+  private readonly customTools: Set<string>;
 
-  constructor(private readonly model: string) {}
+  constructor(private readonly model: string, requestKey?: object) {
+    this.customTools = resolveCustomTools(requestKey);
+  }
+
+  private callItem(call: StreamToolCall, status: string, streamedArguments = call.arguments): JsonObject {
+    if (this.customTools.has(call.name)) {
+      return {
+        id: call.itemId,
+        type: 'custom_tool_call',
+        status,
+        call_id: call.id,
+        name: call.name,
+        input: customToolInput(streamedArguments),
+      };
+    }
+    return {
+      id: call.itemId,
+      type: 'function_call',
+      status,
+      call_id: call.id,
+      name: call.name,
+      arguments: streamedArguments,
+    };
+  }
 
   private event(type: string, fields: JsonObject = {}): string {
     return sse({ type, sequence_number: this.sequence++, ...fields });
@@ -364,14 +451,7 @@ export class ResponsesStreamTranslator {
     const output: JsonObject[] = [];
     if (this.textStarted) output.push(messageOutput(this.text, this.messageId, status));
     for (const call of [...this.calls.values()].sort((a, b) => a.outputIndex - b.outputIndex)) {
-      output.push({
-        id: call.itemId,
-        type: 'function_call',
-        status,
-        call_id: call.id,
-        name: call.name,
-        arguments: call.arguments,
-      });
+      output.push(this.callItem(call, status));
     }
     return {
       id: this.responseId,
@@ -453,24 +533,21 @@ export class ResponsesStreamTranslator {
         call.added = true;
         output += this.event('response.output_item.added', {
           output_index: call.outputIndex,
-          item: {
-            id: call.itemId,
-            type: 'function_call',
-            status: 'in_progress',
-            call_id: call.id,
-            name: call.name,
-            arguments: '',
-          },
+          item: this.callItem(call, 'in_progress', ''),
         });
       }
       const argumentDelta = toolDelta.function?.arguments ?? '';
       if (argumentDelta) {
         call.arguments += argumentDelta;
-        output += this.event('response.function_call_arguments.delta', {
-          item_id: call.itemId,
-          output_index: call.outputIndex,
-          delta: argumentDelta,
-        });
+        // Freeform input cannot be unwrapped from partial JSON, so custom tool
+        // calls only report their input once the arguments are complete.
+        if (!this.customTools.has(call.name)) {
+          output += this.event('response.function_call_arguments.delta', {
+            item_id: call.itemId,
+            output_index: call.outputIndex,
+            delta: argumentDelta,
+          });
+        }
       }
     }
     return output;
@@ -499,21 +576,20 @@ export class ResponsesStreamTranslator {
       });
     }
     for (const call of [...this.calls.values()].sort((a, b) => a.outputIndex - b.outputIndex)) {
-      output += this.event('response.function_call_arguments.done', {
-        item_id: call.itemId,
-        output_index: call.outputIndex,
-        arguments: call.arguments,
-      });
+      output += this.customTools.has(call.name)
+        ? this.event('response.custom_tool_call_input.done', {
+            item_id: call.itemId,
+            output_index: call.outputIndex,
+            input: customToolInput(call.arguments),
+          })
+        : this.event('response.function_call_arguments.done', {
+            item_id: call.itemId,
+            output_index: call.outputIndex,
+            arguments: call.arguments,
+          });
       output += this.event('response.output_item.done', {
         output_index: call.outputIndex,
-        item: {
-          id: call.itemId,
-          type: 'function_call',
-          status: 'completed',
-          call_id: call.id,
-          name: call.name,
-          arguments: call.arguments,
-        },
+        item: this.callItem(call, 'completed'),
       });
     }
     output += this.event('response.completed', { response: this.response('completed', usage) });
