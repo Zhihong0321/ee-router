@@ -133,18 +133,43 @@ describe('Responses API request compatibility', () => {
     })).toThrow('received 42');
   });
 
-  it('rejects Responses-only state and hosted tools', () => {
+  it('rejects Responses-only state', () => {
     expect(() => responsesRequestToNormalized({
       model: 'model',
       input: 'Hello',
       previous_response_id: 'resp_previous',
     })).toThrow(ResponsesCompatibilityError);
+  });
 
-    expect(() => responsesRequestToNormalized({
+  it('maps Codex freeform tools onto function tools and drops hosted tools', () => {
+    expect(responsesRequestToNormalized({
+      model: 'model',
+      input: 'Hello',
+      tools: [
+        { type: 'custom', name: 'apply_patch', description: 'Edit files', format: { type: 'grammar' } },
+        { type: 'web_search' },
+        { type: 'local_shell' },
+      ],
+    }).tools).toEqual([{
+      type: 'function',
+      function: {
+        name: 'apply_patch',
+        description: 'Edit files',
+        parameters: {
+          type: 'object',
+          properties: { input: { type: 'string' } },
+          required: ['input'],
+        },
+      },
+    }]);
+  });
+
+  it('drops a tool list that has no Chat Completions equivalent', () => {
+    expect(responsesRequestToNormalized({
       model: 'model',
       input: 'Hello',
       tools: [{ type: 'web_search' }],
-    })).toThrow('Only function tools');
+    }).tools).toBeUndefined();
   });
 });
 

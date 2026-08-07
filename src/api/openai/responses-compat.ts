@@ -134,21 +134,56 @@ function inputItemToMessages(itemValue: unknown): NormalizedMessage[] {
 function toolsToChat(tools: unknown): unknown[] | undefined {
   if (tools === undefined) return undefined;
   if (!Array.isArray(tools)) throw new ResponsesCompatibilityError('tools must be an array');
-  return tools.map(toolValue => {
+
+  const translated: unknown[] = [];
+  for (const toolValue of tools) {
     const tool = asObject(toolValue);
-    if (!tool || tool.type !== 'function' || typeof tool.name !== 'string') {
-      throw new ResponsesCompatibilityError('Only function tools can be translated to Chat Completions');
+    if (!tool) continue;
+
+    // Chat Completions-shaped tools are already usable.
+    const nested = asObject(tool.function);
+    if (tool.type === 'function' && nested && typeof nested.name === 'string') {
+      translated.push(tool);
+      continue;
     }
-    return {
-      type: 'function',
-      function: {
-        name: tool.name,
-        ...(typeof tool.description === 'string' ? { description: tool.description } : {}),
-        parameters: tool.parameters ?? { type: 'object', properties: {} },
-        ...(typeof tool.strict === 'boolean' ? { strict: tool.strict } : {}),
-      },
-    };
-  });
+
+    if (tool.type === 'function' && typeof tool.name === 'string') {
+      translated.push({
+        type: 'function',
+        function: {
+          name: tool.name,
+          ...(typeof tool.description === 'string' ? { description: tool.description } : {}),
+          parameters: tool.parameters ?? { type: 'object', properties: {} },
+          ...(typeof tool.strict === 'boolean' ? { strict: tool.strict } : {}),
+        },
+      });
+      continue;
+    }
+
+    // Codex freeform/grammar tools (apply_patch) map onto the JSON variant of
+    // the same tool, which takes a single string argument named `input`.
+    if (tool.type === 'custom' && typeof tool.name === 'string') {
+      translated.push({
+        type: 'function',
+        function: {
+          name: tool.name,
+          ...(typeof tool.description === 'string' ? { description: tool.description } : {}),
+          parameters: {
+            type: 'object',
+            properties: { input: { type: 'string' } },
+            required: ['input'],
+          },
+        },
+      });
+      continue;
+    }
+
+    // Hosted tools (web_search, file_search, computer_use, local_shell, ...)
+    // cannot run on a Chat Completions backend; drop them instead of failing
+    // the whole request.
+  }
+
+  return translated.length > 0 ? translated : undefined;
 }
 
 function toolChoiceToChat(value: unknown): unknown {
