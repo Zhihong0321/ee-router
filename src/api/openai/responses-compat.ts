@@ -30,9 +30,14 @@ function asObject(value: unknown): JsonObject | null {
 function contentToChat(content: unknown): string | Array<Record<string, unknown>> {
   if (typeof content === 'string') return content;
   if (content === null) return '';
-  if (!Array.isArray(content)) throw new ResponsesCompatibilityError('Message content must be a string or an array');
+  const parts = Array.isArray(content)
+    ? content
+    : asObject(content)
+      ? [content]
+      : null;
+  if (!parts) throw new ResponsesCompatibilityError('Message content must be a string, object, or array');
 
-  return content.map(partValue => {
+  return parts.map(partValue => {
     const part = asObject(partValue);
     if (!part) throw new ResponsesCompatibilityError('Each message content part must be an object');
     if (part.type === 'input_text' || part.type === 'output_text') {

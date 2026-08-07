@@ -64,6 +64,20 @@ describe('Responses API request compatibility', () => {
     }]);
   });
 
+  it('accepts a singleton structured content part from Codex clients', () => {
+    expect(responsesRequestToNormalized({
+      model: 'model',
+      input: [{
+        type: 'message',
+        role: 'user',
+        content: { type: 'input_text', text: 'Hello from Codex' },
+      }],
+    }).messages).toEqual([{
+      role: 'user',
+      content: [{ type: 'text', text: 'Hello from Codex' }],
+    }]);
+  });
+
   it('rejects Responses-only state and hosted tools', () => {
     expect(() => responsesRequestToNormalized({
       model: 'model',
