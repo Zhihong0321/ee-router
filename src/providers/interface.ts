@@ -10,19 +10,31 @@ export interface ContentBlock {
 }
 
 export interface ToolCallDelta {
-  index: number;
+  index?: number;
   id?: string;
   type?: 'function';
   function?: { name?: string; arguments?: string };
 }
 
+export interface NormalizedMessage {
+  role: string;
+  content: string | ContentBlock[];
+  name?: string;
+  tool_call_id?: string;
+  tool_calls?: ToolCallDelta[];
+}
+
 export interface NormalizedRequest {
   model: string;
-  messages: Array<{ role: string; content: string | ContentBlock[] }>;
+  messages: NormalizedMessage[];
   temperature?: number;
   max_tokens?: number;
+  max_completion_tokens?: number;
   stream: boolean;
   tools?: unknown[];
+  tool_choice?: unknown;
+  parallel_tool_calls?: boolean;
+  response_format?: unknown;
   [key: string]: unknown;
 }
 

@@ -30,6 +30,12 @@ Open the deployed service URL. Any page redirects to `/login` until you enter `A
 
 Once signed in, `/` is the provider console. It supports OpenAI-compatible, Anthropic, Gemini, a local Antigravity CLI (`agy`) runtime, and custom endpoints, model discovery, and optional provider-key expiry deadlines. If `ADMIN_API_KEY` is configured, enter it in the console before managing providers.
 
+### Runware LLM setup
+
+Runware's LLM endpoint already speaks the OpenAI Chat Completions protocol, so it does not need a dedicated provider adapter. In the provider form, leave the default **Runware (ready-to-use preset)** selected, paste the Runware API key, and click **Add provider**. The preset supplies the display name, `https://api.runware.ai/v1` base URL, OpenAI-compatible adapter type, and `*` model route. You can optionally use **Detect models** before saving to replace `*` with Runware's current model catalog.
+
+Clients can then use either `POST /v1/chat/completions` or the router's compatibility endpoint `POST /v1/responses`. The Responses endpoint translates text, image URL inputs, JSON output formats, and function tools to Chat Completions, including typed SSE streaming events. It intentionally rejects stateful `previous_response_id` and background mode because a Chat Completions upstream cannot reproduce those server-side semantics.
+
 Antigravity runs inside the same EE Router container. Its provider location is `local://agy`; it does not use a Base URL or provider API key. The image installs `/usr/local/bin/agy`, runs it as the unprivileged `node` user, keeps the native OAuth profile under the `/storage` persistent volume, and creates per-request scratch directories under `/tmp/agyproxy`.
 
 The one working native AGY profile must be authenticated directly in this service or transferred into `/storage/.gemini` with explicit credential-migration approval. Do not copy, print, or inspect OAuth token contents.

@@ -8,6 +8,7 @@ import { providerRegistry } from './providers/registry.js';
 import { latencyTracker } from './router/latency-tracker.js';
 import { registerHealthRoutes } from './health/checker.js';
 import { registerOpenAIRoutes } from './api/openai/chat.js';
+import { registerOpenAIResponsesRoute } from './api/openai/responses.js';
 import { registerAnthropicRoutes } from './api/anthropic/messages.js';
 import { registerAdminKeyRoutes } from './api/admin/keys.js';
 import { registerAdminProviderRoutes } from './api/admin/providers.js';
@@ -157,6 +158,7 @@ async function main(): Promise<void> {
   await registerLoginRoutes(app);
   await registerHealthRoutes(app);
   await registerOpenAIRoutes(app);
+  await registerOpenAIResponsesRoute(app);
   await registerAnthropicRoutes(app);
   await registerAdminKeyRoutes(app);
   await registerAdminProviderRoutes(app);

@@ -15,6 +15,10 @@ describe('admin provider model editor', () => {
     expect(html).toContain(".split(/[\\n,]/)");
     expect(html).not.toContain(".join('\\\\n')");
     expect(html).not.toContain(".split(/[\\\\n,]/)");
+    expect(html).toContain('<option value="runware">Runware (ready-to-use preset)</option>');
+    expect(html).toContain("runware: 'https://api.runware.ai/v1'");
+    expect(html).toContain("type === 'runware' ? 'openai-compatible' : type");
+    expect(html).toContain("el('models').value = '*'");
 
     await app.close();
   });

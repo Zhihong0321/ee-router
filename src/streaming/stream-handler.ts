@@ -1,7 +1,8 @@
 import { type NormalizedResponse, type ProviderAdapter, type TokenUsage } from '../providers/interface.js';
 import { type FastifyReply } from 'fastify';
+import { normalizedResponseToResponses, ResponsesStreamTranslator } from '../api/openai/responses-compat.js';
 
-export type ApiFormat = 'openai' | 'anthropic';
+export type ApiFormat = 'openai' | 'anthropic' | 'responses';
 
 type ProxyResult = {
   ttfbMs: number;
@@ -20,6 +21,8 @@ function normalizedResponsePayload(
     message: { role: 'assistant', content: '' },
     finish_reason: null,
   };
+
+  if (format === 'responses') return normalizedResponseToResponses(normalized, model);
 
   if (format === 'anthropic') {
     return {
@@ -86,7 +89,26 @@ async function handleLocalStreaming(
       'x-accel-buffering': 'no',
     });
 
-    if (callFormat === 'anthropic') {
+    if (callFormat === 'responses') {
+      const translator = new ResponsesStreamTranslator(model);
+      reply.raw.write(translator.start());
+      reply.raw.write(translator.consume({
+        id: normalized.id,
+        model,
+        created: normalized.created,
+        choices: [{
+          index: 0,
+          delta: {
+            role: 'assistant',
+            content: content || undefined,
+            tool_calls: choice?.message.tool_calls,
+          },
+          finish_reason: finishReason,
+        }],
+        usage: normalized.usage,
+      }));
+      reply.raw.write(translator.finish(normalized.usage));
+    } else if (callFormat === 'anthropic') {
       reply.raw.write('event: message_start\ndata: ' + JSON.stringify({
         type: 'message_start',
         message: {
@@ -275,7 +297,11 @@ export async function handleStreamingProxy(
       const data = await response.json() as Record<string, unknown>;
       const normalized = adapter.translateResponse(data);
       await reply.headers({ 'Content-Type': 'application/json' }).send(
-        adapter.config.provider_type === 'gemini' ? geminiResponse(data, adapter, requestedModel, callFormat) : data,
+        callFormat === 'responses'
+          ? normalizedResponseToResponses(normalized, requestedModel)
+          : adapter.config.provider_type === 'gemini'
+            ? geminiResponse(data, adapter, requestedModel, callFormat)
+            : data,
       );
       return { ttfbMs, status: 'success', usage: normalized.usage };
     }
@@ -291,6 +317,10 @@ export async function handleStreamingProxy(
     const decoder = new TextDecoder();
     let buffer = '';
     let usage: TokenUsage | undefined;
+    const responsesTranslator = callFormat === 'responses'
+      ? new ResponsesStreamTranslator(requestedModel)
+      : null;
+    if (responsesTranslator) reply.raw.write(responsesTranslator.start());
 
     try {
       while (true) {
@@ -303,7 +333,10 @@ export async function handleStreamingProxy(
 
         for (const line of lines) {
           usage = mergeTokenUsage(usage, usageFromStreamLine(line));
-          if (adapter.config.provider_type === 'gemini') {
+          if (responsesTranslator) {
+            const chunks = adapter.translateStreamChunk(Buffer.from(line + '\n'));
+            for (const chunk of chunks) reply.raw.write(responsesTranslator.consume(chunk));
+          } else if (adapter.config.provider_type === 'gemini') {
             const translated = translateGeminiStreamLine(line, callFormat, requestedModel, adapter);
             if (translated) reply.raw.write(translated);
           } else if (callFormat === 'anthropic' && adapter.config.provider_type === 'openai-compatible') {
@@ -318,12 +351,15 @@ export async function handleStreamingProxy(
         }
       }
     } catch (streamError) {
-      reply.raw.write(callFormat === 'openai' ? 'data: [DONE]\n\n' : 'event: error\ndata: {}\n\n');
+      reply.raw.write(callFormat === 'openai'
+        ? 'data: [DONE]\n\n'
+        : 'event: error\ndata: ' + JSON.stringify({ type: 'error', message: String(streamError) }) + '\n\n');
       return { ttfbMs, status: 'error', errorMessage: String(streamError), usage };
     }
 
     usage = mergeTokenUsage(usage, usageFromStreamLine(buffer));
-    if (callFormat === 'openai') reply.raw.write('data: [DONE]\n\n');
+    if (responsesTranslator) reply.raw.write(responsesTranslator.finish(usage));
+    else if (callFormat === 'openai') reply.raw.write('data: [DONE]\n\n');
     reply.raw.end();
     return { ttfbMs, status: 'success', usage };
   } catch (error) {
@@ -383,7 +419,11 @@ export async function handleNonStreamingProxy(
     const data = await response.json() as Record<string, unknown>;
     const normalized = adapter.translateResponse(data);
     await reply.send(
-      adapter.config.provider_type === 'gemini' ? geminiResponse(data, adapter, requestedModel, callFormat) : data,
+      callFormat === 'responses'
+        ? normalizedResponseToResponses(normalized, requestedModel)
+        : adapter.config.provider_type === 'gemini'
+          ? geminiResponse(data, adapter, requestedModel, callFormat)
+          : data,
     );
     return { ttfbMs, status: 'success', usage: normalized.usage };
   } catch (error) {

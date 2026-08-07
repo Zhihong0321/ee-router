@@ -13,12 +13,19 @@ export class OpenAIAdapter implements ProviderAdapter {
       messages: req.messages.map(m => ({
         role: m.role,
         content: typeof m.content === 'string' ? m.content : m.content,
+        ...(m.name !== undefined ? { name: m.name } : {}),
+        ...(m.tool_call_id !== undefined ? { tool_call_id: m.tool_call_id } : {}),
+        ...(m.tool_calls !== undefined ? { tool_calls: m.tool_calls } : {}),
       })),
       stream: req.stream,
     };
     if (req.temperature !== undefined) body.temperature = req.temperature;
     if (req.max_tokens !== undefined) body.max_tokens = req.max_tokens;
+    if (req.max_completion_tokens !== undefined) body.max_completion_tokens = req.max_completion_tokens;
     if (req.tools !== undefined) body.tools = req.tools;
+    if (req.tool_choice !== undefined) body.tool_choice = req.tool_choice;
+    if (req.parallel_tool_calls !== undefined) body.parallel_tool_calls = req.parallel_tool_calls;
+    if (req.response_format !== undefined) body.response_format = req.response_format;
     if (req.stream_options !== undefined) body.stream_options = req.stream_options;
 
     return {
